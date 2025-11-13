@@ -1,0 +1,40 @@
+/node_modules
+/public/hot
+/public/storage
+/storage/*.key
+/vendor
+.env
+.env.backup
+.phpunit.result.cache
+docker-compose.override.yml
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+/.idea
+/.vscode
+
+# Firebase Admin SDK - NEVER commit these!
+*firebase-adminsdk*.json
+sakoa-64c2e-firebase-adminsdk*.json
+chatty-best-firebase-adminsdk*.json
+
+# Laravel specific
+/bootstrap/cache/*
+!/bootstrap/cache/.gitkeep
+/storage/framework/cache/*
+!/storage/framework/cache/.gitkeep
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitkeep
+/storage/framework/views/*
+!/storage/framework/views/.gitkeep
+/storage/logs/*
+!/storage/logs/.gitkeep
+
+# Composer
+composer.phar
+composer.lock
+
+# OS files
+.DS_Store
+Thumbs.db

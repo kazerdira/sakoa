@@ -1,0 +1,36 @@
+# Flutter/Dart
+chatty/.dart_tool/
+chatty/.flutter-plugins
+chatty/.flutter-plugins-dependencies
+chatty/.packages
+chatty/build/
+chatty/flutter_*.log
+
+# Firebase - EXCLUDE SENSITIVE FILES
+chatty/android/app/google-services.json
+chatty/ios/firebase_app_id_file.json
+chatty/lib/firebase_options.dart
+chatty/*firebase-adminsdk*.json
+chatty/**/*firebase-adminsdk*.json
+
+# Android signing
+chatty/**/*.keystore
+chatty/**/*.jks
+chatty/android/key.properties
+
+# Laravel - EXCLUDE SENSITIVE FILES
+chatty.codemain.top/vendor/
+chatty.codemain.top/node_modules/
+chatty.codemain.top/.env
+chatty.codemain.top/.env.backup
+chatty.codemain.top/storage/*.key
+chatty.codemain.top/*firebase-adminsdk*.json
+chatty.codemain.top/**/*firebase-adminsdk*.json
+chatty.codemain.top/composer.phar
+chatty.codemain.top/composer.lock
+chatty.codemain.top/public/hot
+chatty.codemain.top/public/storage
+chatty.codemain.top/storage/logs/*.log
+
+# VS Code
+.vscode/
