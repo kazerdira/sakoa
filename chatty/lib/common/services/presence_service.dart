@@ -95,6 +95,13 @@ class PresenceService extends GetxService {
         '[PresenceService] 💓 Started heartbeat (every ${HEARTBEAT_INTERVAL.inSeconds}s)');
   }
 
+  /// Stop heartbeat timer (called on logout)
+  void stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    print('[PresenceService] 🛑 Stopped heartbeat');
+  }
+
   // ============ PRESENCE QUERIES ============
 
   /// Get presence data for a user (cached)
@@ -333,10 +340,11 @@ class PresenceService extends GetxService {
 
   @override
   void onClose() {
+    print('[PresenceService] 🛑 Cleaning up...');
     _heartbeatTimer?.cancel();
     _cleanupTimer?.cancel();
-    setOffline();
-    print('[PresenceService] 🛑 Stopped heartbeat and set offline');
+    // Note: setOffline() should be called manually before disposal
+    // via stopHeartbeat() in logout flow
     super.onClose();
   }
 }

@@ -61,18 +61,28 @@ class UserStore extends GetxController {
   Future<void> onLogout() async {
     // if (_isLogin.value) await UserAPI.logout();
 
-    // ✅ FIX: Set online status to 0 (offline) in Firestore on logout
+    // 🔥 CRITICAL: Stop heartbeat timer and set offline via PresenceService
     try {
-      final userToken = profile.token ?? token;
-      if (userToken.isNotEmpty) {
-        await FirebaseFirestore.instance
-            .collection("user_profiles")
-            .doc(userToken)
-            .update({'online': 0});
-        print('[UserStore] ✅ Set online status to 0 on logout');
-      }
+      final presenceService = Get.find<PresenceService>();
+      presenceService.stopHeartbeat(); // Stop the heartbeat timer
+      await presenceService.setOffline(); // Set offline in Firestore
+      print('[UserStore] ✅ Stopped heartbeat and set offline on logout');
     } catch (e) {
-      print('[UserStore] ⚠️ Failed to update online status on logout: $e');
+      print(
+          '[UserStore] ⚠️ PresenceService not available, manual fallback: $e');
+      // Fallback to manual update if service not found
+      try {
+        final userToken = profile.token ?? token;
+        if (userToken.isNotEmpty) {
+          await FirebaseFirestore.instance
+              .collection("user_profiles")
+              .doc(userToken)
+              .update({'online': 0});
+          print('[UserStore] ✅ Set online status to 0 on logout (fallback)');
+        }
+      } catch (e2) {
+        print('[UserStore] ⚠️ Failed to update online status on logout: $e2');
+      }
     }
 
     await StorageService.to.remove(STORAGE_USER_TOKEN_KEY);
