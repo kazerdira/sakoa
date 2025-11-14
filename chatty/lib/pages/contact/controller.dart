@@ -1032,16 +1032,31 @@ class ContactController extends GetxController {
   Future<void> blockUser(
       String contactToken, String contactName, String contactAvatar) async {
     try {
-      var existingQuery = await db
+      // Check for existing relationship in BOTH directions
+      var outgoingQuery = await db
           .collection("contacts")
           .where("user_token", isEqualTo: token)
           .where("contact_token", isEqualTo: contactToken)
           .get();
 
-      if (existingQuery.docs.isNotEmpty) {
+      var incomingQuery = await db
+          .collection("contacts")
+          .where("user_token", isEqualTo: contactToken)
+          .where("contact_token", isEqualTo: token)
+          .get();
+
+      // Delete incoming relationship (they added me)
+      if (incomingQuery.docs.isNotEmpty) {
+        for (var doc in incomingQuery.docs) {
+          await db.collection("contacts").doc(doc.id).delete();
+        }
+      }
+
+      // Update or create outgoing relationship as blocked
+      if (outgoingQuery.docs.isNotEmpty) {
         await db
             .collection("contacts")
-            .doc(existingQuery.docs.first.id)
+            .doc(outgoingQuery.docs.first.id)
             .update({
           "status": "blocked",
           "blocked_at": Timestamp.now(),
@@ -1057,9 +1072,17 @@ class ContactController extends GetxController {
         });
       }
 
-      toastInfo(msg: "$contactName has been blocked");
+      // Remove from accepted contacts list immediately (smooth deletion)
+      state.acceptedContacts
+          .removeWhere((contact) => contact.contact_token == contactToken);
+
+      // Update relationship map
+      state.relationshipStatus[contactToken] = 'blocked';
+
+      // Add to blocked list
       await loadBlockedUsers();
-      await loadAcceptedContacts();
+
+      toastInfo(msg: "$contactName has been blocked");
     } catch (e) {
       print("[ContactController] Error blocking user: $e");
       toastInfo(msg: "Failed to block user");

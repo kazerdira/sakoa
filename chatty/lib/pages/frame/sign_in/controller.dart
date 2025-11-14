@@ -167,6 +167,9 @@ class SignInController extends GetxController {
           String name = result.data!.name ?? '';
           String searchName = name.toLowerCase().trim();
 
+          print('[SignIn] 🔑 Creating/updating profile for token: $token');
+          print('[SignIn] 📝 Name: $name, Email: ${loginRequestEntity.email}');
+
           await db.collection("user_profiles").doc(token).set({
             'token': token,
             'name': name,
@@ -177,7 +180,8 @@ class SignInController extends GetxController {
             'updated_at': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
 
-          print('[SignIn] User profile created/updated in Firestore');
+          print(
+              '[SignIn] ✅ User profile created/updated in Firestore with doc ID: $token');
         } catch (firestoreError) {
           print('[SignIn] Firestore profile update error: $firestoreError');
           // Don't block login if Firestore fails

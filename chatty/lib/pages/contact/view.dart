@@ -295,10 +295,23 @@ class ContactPage extends GetView<ContactController> {
           IconButton(
             icon: Icon(Icons.block, color: Colors.red),
             onPressed: () {
-              controller.blockUser(
-                contact.contact_token ?? "",
-                contact.contact_name ?? "",
-                contact.contact_avatar ?? "",
+              Get.defaultDialog(
+                title: "Block ${contact.contact_name}?",
+                middleText:
+                    "Are you sure you want to block ${contact.contact_name}? They will be removed from your contacts and won't be able to send you messages.",
+                textConfirm: "Block",
+                textCancel: "Cancel",
+                confirmTextColor: Colors.white,
+                buttonColor: Colors.red,
+                cancelTextColor: Colors.grey,
+                onConfirm: () {
+                  Get.back(); // Close dialog
+                  controller.blockUser(
+                    contact.contact_token ?? "",
+                    contact.contact_name ?? "",
+                    contact.contact_avatar ?? "",
+                  );
+                },
               );
             },
           ),
@@ -537,15 +550,21 @@ class ContactPage extends GetView<ContactController> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            CircularProgressIndicator(
-                              color: AppColors.primaryElement,
+                            SizedBox(
+                              width: 50.w,
+                              height: 50.w,
+                              child: CircularProgressIndicator(
+                                color: AppColors.primaryElement,
+                                strokeWidth: 3.w,
+                              ),
                             ),
-                            SizedBox(height: 10.h),
+                            SizedBox(height: 15.h),
                             Text(
                               "Searching users...",
                               style: TextStyle(
                                 color: AppColors.primaryText,
                                 fontSize: 14.sp,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                           ],
@@ -692,12 +711,18 @@ class ContactPage extends GetView<ContactController> {
                                         return Obx(() => controller
                                                 .state.isLoadingContacts.value
                                             ? Container(
-                                                padding: EdgeInsets.all(20.h),
+                                                padding: EdgeInsets.symmetric(
+                                                    vertical: 20.h),
                                                 alignment: Alignment.center,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  color:
-                                                      AppColors.primaryElement,
+                                                child: SizedBox(
+                                                  width: 30.w,
+                                                  height: 30.w,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    color: AppColors
+                                                        .primaryElement,
+                                                    strokeWidth: 2.5.w,
+                                                  ),
                                                 ),
                                               )
                                             : SizedBox.shrink());
