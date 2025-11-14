@@ -17,6 +17,7 @@ import 'package:sakoa/common/store/store.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart';
+import 'package:sakoa/pages/contact/index.dart';
 
 class ChatController extends GetxController {
   ChatController();
@@ -34,19 +35,31 @@ class ChatController extends GetxController {
   File? _photo;
   final ImagePicker _picker = ImagePicker();
 
-  goMore(){
-    state.more_status.value = state.more_status.value?false:true;
+  goMore() {
+    state.more_status.value = state.more_status.value ? false : true;
   }
 
-  callAudio() async{
+  callAudio() async {
     state.more_status.value = false;
-    Get.toNamed(AppRoutes.VoiceCall,parameters: {"doc_id":doc_id,"to_token":state.to_token.value,"to_name":state.to_name.value,"to_avatar":state.to_avatar.value,"call_role":"anchor"});
-  }
-  callVideo() async{
-    state.more_status.value = false;
-    Get.toNamed(AppRoutes.VideoCall,parameters: {"doc_id":doc_id,"to_token":state.to_token.value,"to_name":state.to_name.value,"to_avatar":state.to_avatar.value,"call_role":"anchor"});
+    Get.toNamed(AppRoutes.VoiceCall, parameters: {
+      "doc_id": doc_id,
+      "to_token": state.to_token.value,
+      "to_name": state.to_name.value,
+      "to_avatar": state.to_avatar.value,
+      "call_role": "anchor"
+    });
   }
 
+  callVideo() async {
+    state.more_status.value = false;
+    Get.toNamed(AppRoutes.VideoCall, parameters: {
+      "doc_id": doc_id,
+      "to_token": state.to_token.value,
+      "to_name": state.to_name.value,
+      "to_avatar": state.to_avatar.value,
+      "call_role": "anchor"
+    });
+  }
 
   Future imgFromGallery() async {
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
@@ -57,7 +70,6 @@ class ChatController extends GetxController {
     } else {
       print('No image selected.');
     }
-
   }
 
   Future imgFromCamera() async {
@@ -74,21 +86,19 @@ class ChatController extends GetxController {
   Future uploadFile() async {
     // if (_photo == null) return;
     // print(_photo);
-    var result = await ChatAPI.upload_img(file:_photo);
+    var result = await ChatAPI.upload_img(file: _photo);
     print(result.data);
-    if(result.code==0){
+    if (result.code == 0) {
       sendImageMessage(result.data!);
-    }else{
+    } else {
       toastInfo(msg: "image error");
     }
   }
 
-
-  sendMessage() async{
-
+  sendMessage() async {
     print("---------------chat-----------------");
     String sendcontent = myinputController.text;
-    if(sendcontent.isEmpty){
+    if (sendcontent.isEmpty) {
       toastInfo(msg: "content not empty");
       return;
     }
@@ -100,32 +110,48 @@ class ChatController extends GetxController {
       addtime: Timestamp.now(),
     );
 
-    await db.collection("message").doc(doc_id).collection("msglist").withConverter(
-      fromFirestore: Msgcontent.fromFirestore,
-      toFirestore: (Msgcontent msgcontent, options) => msgcontent.toFirestore(),
-    ).add(content).then((DocumentReference doc) {
-         print('DocumentSnapshot added with ID: ${doc.id}');
-         myinputController.clear();
-
+    await db
+        .collection("message")
+        .doc(doc_id)
+        .collection("msglist")
+        .withConverter(
+          fromFirestore: Msgcontent.fromFirestore,
+          toFirestore: (Msgcontent msgcontent, options) =>
+              msgcontent.toFirestore(),
+        )
+        .add(content)
+        .then((DocumentReference doc) {
+      print('DocumentSnapshot added with ID: ${doc.id}');
+      myinputController.clear();
     });
-    var message_res = await db.collection("message").doc(doc_id).withConverter(
-      fromFirestore: Msg.fromFirestore,
-      toFirestore: (Msg msg, options) => msg.toFirestore(),
-    ).get();
-    if(message_res.data()!=null){
+    var message_res = await db
+        .collection("message")
+        .doc(doc_id)
+        .withConverter(
+          fromFirestore: Msg.fromFirestore,
+          toFirestore: (Msg msg, options) => msg.toFirestore(),
+        )
+        .get();
+    if (message_res.data() != null) {
       var item = message_res.data()!;
-      int to_msg_num = item.to_msg_num==null?0:item.to_msg_num!;
-      int from_msg_num = item.from_msg_num==null?0:item.from_msg_num!;
+      int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+      int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
       if (item.from_token == token) {
         from_msg_num = from_msg_num + 1;
       } else {
         to_msg_num = to_msg_num + 1;
       }
-      await db.collection("message").doc(doc_id).update({"to_msg_num":to_msg_num,"from_msg_num":from_msg_num,"last_msg":sendcontent,"last_time":Timestamp.now()});
+      await db.collection("message").doc(doc_id).update({
+        "to_msg_num": to_msg_num,
+        "from_msg_num": from_msg_num,
+        "last_msg": sendcontent,
+        "last_time": Timestamp.now()
+      });
     }
     sendNotifications("text");
   }
-  sendImageMessage(String url) async{
+
+  sendImageMessage(String url) async {
     state.more_status.value = false;
     print("---------------chat-----------------");
     final content = Msgcontent(
@@ -135,26 +161,42 @@ class ChatController extends GetxController {
       addtime: Timestamp.now(),
     );
 
-    await db.collection("message").doc(doc_id).collection("msglist").withConverter(
-      fromFirestore: Msgcontent.fromFirestore,
-      toFirestore: (Msgcontent msgcontent, options) => msgcontent.toFirestore(),
-    ).add(content).then((DocumentReference doc) {
+    await db
+        .collection("message")
+        .doc(doc_id)
+        .collection("msglist")
+        .withConverter(
+          fromFirestore: Msgcontent.fromFirestore,
+          toFirestore: (Msgcontent msgcontent, options) =>
+              msgcontent.toFirestore(),
+        )
+        .add(content)
+        .then((DocumentReference doc) {
       print('DocumentSnapshot added with ID: ${doc.id}');
     });
-    var message_res = await db.collection("message").doc(doc_id).withConverter(
-      fromFirestore: Msg.fromFirestore,
-      toFirestore: (Msg msg, options) => msg.toFirestore(),
-    ).get();
-    if(message_res.data()!=null){
+    var message_res = await db
+        .collection("message")
+        .doc(doc_id)
+        .withConverter(
+          fromFirestore: Msg.fromFirestore,
+          toFirestore: (Msg msg, options) => msg.toFirestore(),
+        )
+        .get();
+    if (message_res.data() != null) {
       var item = message_res.data()!;
-      int to_msg_num = item.to_msg_num==null?0:item.to_msg_num!;
-      int from_msg_num = item.from_msg_num==null?0:item.from_msg_num!;
+      int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+      int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
       if (item.from_token == token) {
         from_msg_num = from_msg_num + 1;
       } else {
         to_msg_num = to_msg_num + 1;
       }
-      await db.collection("message").doc(doc_id).update({"to_msg_num":to_msg_num,"from_msg_num":from_msg_num,"last_msg":"【image】","last_time":Timestamp.now()});
+      await db.collection("message").doc(doc_id).update({
+        "to_msg_num": to_msg_num,
+        "from_msg_num": from_msg_num,
+        "last_msg": "【image】",
+        "last_time": Timestamp.now()
+      });
     }
 
     sendNotifications("text");
@@ -178,33 +220,48 @@ class ChatController extends GetxController {
     }
   }
 
-  clear_msg_num(String doc_id) async{
-    var message_res = await db.collection("message").doc(doc_id).withConverter(
-      fromFirestore: Msg.fromFirestore,
-      toFirestore: (Msg msg, options) => msg.toFirestore(),
-    ).get();
-    if(message_res.data()!=null){
+  clear_msg_num(String doc_id) async {
+    var message_res = await db
+        .collection("message")
+        .doc(doc_id)
+        .withConverter(
+          fromFirestore: Msg.fromFirestore,
+          toFirestore: (Msg msg, options) => msg.toFirestore(),
+        )
+        .get();
+    if (message_res.data() != null) {
       var item = message_res.data()!;
-      int to_msg_num = item.to_msg_num==null?0:item.to_msg_num!;
-      int from_msg_num = item.from_msg_num==null?0:item.from_msg_num!;
+      int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+      int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
       if (item.from_token == token) {
         to_msg_num = 0;
       } else {
         from_msg_num = 0;
       }
-      await db.collection("message").doc(doc_id).update({"to_msg_num":to_msg_num,"from_msg_num":from_msg_num});
+      await db
+          .collection("message")
+          .doc(doc_id)
+          .update({"to_msg_num": to_msg_num, "from_msg_num": from_msg_num});
     }
   }
 
-  asyncLoadMoreData(int page) async{
-    final messages = await db.collection("message").doc(doc_id).collection("msglist").withConverter(
-      fromFirestore: Msgcontent.fromFirestore,
-      toFirestore: (Msgcontent msgcontent, options) => msgcontent.toFirestore(),
-    ).orderBy("addtime", descending: true).where("addtime", isLessThan: state.msgcontentList.value.last.addtime)
-        .limit(10).get();
+  asyncLoadMoreData(int page) async {
+    final messages = await db
+        .collection("message")
+        .doc(doc_id)
+        .collection("msglist")
+        .withConverter(
+          fromFirestore: Msgcontent.fromFirestore,
+          toFirestore: (Msgcontent msgcontent, options) =>
+              msgcontent.toFirestore(),
+        )
+        .orderBy("addtime", descending: true)
+        .where("addtime", isLessThan: state.msgcontentList.value.last.addtime)
+        .limit(10)
+        .get();
     print(state.msgcontentList.value.last.content);
     print("isGreaterThan-----");
-    if(messages.docs.isNotEmpty){
+    if (messages.docs.isNotEmpty) {
       messages.docs.forEach((element) {
         var data = element.data();
         state.msgcontentList.value.add(data);
@@ -212,17 +269,60 @@ class ChatController extends GetxController {
       });
 
       SchedulerBinding.instance.addPostFrameCallback((_) {
-          isloadmore = true;
+        isloadmore = true;
       });
     }
     state.isloading.value = false;
-
   }
 
-  close_all_pop() async{
+  close_all_pop() async {
     Get.focusScope?.unfocus();
     state.more_status.value = false;
     print("------close_all_pop");
+  }
+
+  /// Verify contact and block status before allowing chat
+  Future<void> _verifyContactStatus() async {
+    try {
+      final contactController = Get.find<ContactController>();
+
+      // Check if user is blocked
+      bool isBlocked =
+          await contactController.isUserBlocked(state.to_token.value);
+      if (isBlocked) {
+        toastInfo(msg: "This user is blocked. Please unblock to chat.");
+        Get.back();
+        return;
+      }
+
+      // Check if user is contact
+      bool isContact =
+          await contactController.isUserContact(state.to_token.value);
+      if (!isContact) {
+        toastInfo(msg: "You must be contacts to chat");
+        Get.back();
+        return;
+      }
+    } catch (e) {
+      print("[ChatController] Error verifying contact status: $e");
+    }
+  }
+
+  /// Block this user from chat
+  Future<void> blockThisUser() async {
+    try {
+      final contactController = Get.find<ContactController>();
+      await contactController.blockUser(
+        state.to_token.value,
+        state.to_name.value,
+        state.to_avatar.value,
+      );
+      toastInfo(msg: "${state.to_name.value} has been blocked");
+      Get.back(); // Return to messages list
+    } catch (e) {
+      print("[ChatController] Error blocking user: $e");
+      toastInfo(msg: "Failed to block user");
+    }
   }
 
   ///
@@ -233,10 +333,14 @@ class ChatController extends GetxController {
     var data = Get.parameters;
     print(data);
     doc_id = data["doc_id"];
-    state.to_token.value = data["to_token"]??"";
-    state.to_name.value = data["to_name"]??"";
-    state.to_avatar.value = data["to_avatar"]??"";
-    state.to_online.value = data["to_online"]??"1";
+    state.to_token.value = data["to_token"] ?? "";
+    state.to_name.value = data["to_name"] ?? "";
+    state.to_avatar.value = data["to_avatar"] ?? "";
+    state.to_online.value = data["to_online"] ?? "1";
+
+    // Check contact status before allowing chat
+    _verifyContactStatus();
+
     clear_msg_num(doc_id);
   }
 
@@ -245,13 +349,20 @@ class ChatController extends GetxController {
     super.onReady();
     print("onReady------------");
     state.msgcontentList.clear();
-    final messages = db.collection("message").doc(doc_id).collection("msglist").withConverter(
-      fromFirestore: Msgcontent.fromFirestore,
-      toFirestore: (Msgcontent msgcontent, options) => msgcontent.toFirestore(),
-    ).orderBy("addtime", descending: true).limit(15);
+    final messages = db
+        .collection("message")
+        .doc(doc_id)
+        .collection("msglist")
+        .withConverter(
+          fromFirestore: Msgcontent.fromFirestore,
+          toFirestore: (Msgcontent msgcontent, options) =>
+              msgcontent.toFirestore(),
+        )
+        .orderBy("addtime", descending: true)
+        .limit(15);
 
     listener = messages.snapshots().listen(
-          (event) {
+      (event) {
         print("current data: ${event.docs}");
         print("current data: ${event.metadata.hasPendingWrites}");
         List<Msgcontent> tempMsgList = <Msgcontent>[];
@@ -259,7 +370,7 @@ class ChatController extends GetxController {
           switch (change.type) {
             case DocumentChangeType.added:
               print("added----: ${change.doc.data()}");
-              if(change.doc.data()!=null){
+              if (change.doc.data() != null) {
                 tempMsgList.add(change.doc.data()!);
               }
               break;
@@ -272,39 +383,35 @@ class ChatController extends GetxController {
           }
         }
         tempMsgList.reversed.forEach((element) {
-          state.msgcontentList.value.insert(0,element);
+          state.msgcontentList.value.insert(0, element);
         });
         state.msgcontentList.refresh();
-        
+
         SchedulerBinding.instance.addPostFrameCallback((_) {
-          if (myscrollController.hasClients){
+          if (myscrollController.hasClients) {
             myscrollController.animateTo(
               myscrollController.position.minScrollExtent,
               duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,);
+              curve: Curves.easeOut,
+            );
           }
-
         });
-
       },
       onError: (error) => print("Listen failed: $error"),
     );
 
-    myscrollController.addListener((){
+    myscrollController.addListener(() {
       // print(myscrollController.offset);
       //  print(myscrollController.position.maxScrollExtent);
-      if((myscrollController.offset+10)>myscrollController.position.maxScrollExtent){
-        if(isloadmore){
+      if ((myscrollController.offset + 10) >
+          myscrollController.position.maxScrollExtent) {
+        if (isloadmore) {
           state.isloading.value = true;
           isloadmore = false;
           asyncLoadMoreData(state.msgcontentList.length);
         }
-
       }
-
     });
-
-
   }
 
   @override

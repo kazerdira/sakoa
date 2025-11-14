@@ -14,6 +14,15 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
+// Test route - no authentication needed
+Route::get('/hello', function() {
+    return response()->json([
+        'message' => 'Hello World from Laravel!',
+        'status' => 'success',
+        'timestamp' => now()
+    ]);
+});
+
 Route::group(['namespace' => 'Api'], function(){
    
     Route::any('/login','LoginController@login');

@@ -13,6 +13,7 @@ import 'package:sakoa/common/entities/entities.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:sakoa/common/store/store.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:sakoa/pages/contact/index.dart';
 
 class MessageController extends GetxController with WidgetsBindingObserver {
   MessageController();
@@ -89,28 +90,76 @@ class MessageController extends GetxController with WidgetsBindingObserver {
   }
 
   addMessage(List<QueryDocumentSnapshot<Msg>> data) async {
-    data.forEach((element) {
-      var item = element.data();
-      Message message = new Message();
-      message.doc_id = element.id;
-      message.last_time = item.last_time;
-      message.msg_num = item.msg_num;
-      message.last_msg = item.last_msg;
-      if (item.from_token == token) {
-        message.name = item.to_name;
-        message.avatar = item.to_avatar;
-        message.token = item.to_token;
-        message.online = item.to_online;
-        message.msg_num = item.to_msg_num ?? 0;
-      } else {
-        message.name = item.from_name;
-        message.avatar = item.from_avatar;
-        message.token = item.from_token;
-        message.online = item.from_online;
-        message.msg_num = item.from_msg_num ?? 0;
+    try {
+      // Get contact controller to check if users are contacts
+      final contactController = Get.find<ContactController>();
+
+      for (var element in data) {
+        var item = element.data();
+        Message message = new Message();
+        message.doc_id = element.id;
+        message.last_time = item.last_time;
+        message.msg_num = item.msg_num;
+        message.last_msg = item.last_msg;
+
+        String otherToken = "";
+        if (item.from_token == token) {
+          message.name = item.to_name;
+          message.avatar = item.to_avatar;
+          message.token = item.to_token;
+          message.online = item.to_online;
+          message.msg_num = item.to_msg_num ?? 0;
+          otherToken = item.to_token ?? "";
+        } else {
+          message.name = item.from_name;
+          message.avatar = item.from_avatar;
+          message.token = item.from_token;
+          message.online = item.from_online;
+          message.msg_num = item.from_msg_num ?? 0;
+          otherToken = item.from_token ?? "";
+        }
+
+        // Only add message if user is an accepted contact
+        try {
+          bool isContact = await contactController.isUserContact(otherToken);
+          if (isContact) {
+            state.msgList.add(message);
+          } else {
+            print(
+                "[MessageController] Filtered out message from non-contact: $otherToken");
+          }
+        } catch (e) {
+          // If contact check fails, show the message anyway (fallback to old behavior)
+          print("[MessageController] Error checking contact status: $e");
+          state.msgList.add(message);
+        }
       }
-      state.msgList.add(message);
-    });
+    } catch (e) {
+      print("[MessageController] Error in addMessage: $e");
+      // Fallback to old behavior if contact controller not available
+      data.forEach((element) {
+        var item = element.data();
+        Message message = new Message();
+        message.doc_id = element.id;
+        message.last_time = item.last_time;
+        message.msg_num = item.msg_num;
+        message.last_msg = item.last_msg;
+        if (item.from_token == token) {
+          message.name = item.to_name;
+          message.avatar = item.to_avatar;
+          message.token = item.to_token;
+          message.online = item.to_online;
+          message.msg_num = item.to_msg_num ?? 0;
+        } else {
+          message.name = item.from_name;
+          message.avatar = item.from_avatar;
+          message.token = item.from_token;
+          message.online = item.from_online;
+          message.msg_num = item.from_msg_num ?? 0;
+        }
+        state.msgList.add(message);
+      });
+    }
   }
 
   _snapshots() async {

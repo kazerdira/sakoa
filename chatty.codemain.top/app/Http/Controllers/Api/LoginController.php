@@ -36,12 +36,22 @@ class LoginController extends Controller
       //1:email，2:google,  3:facebook,4 apple,5 phone
       $validated = $validator->validated();
       
-      $map=[];
-      $map["type"] = $validated["type"];
-      $map["open_id"] = $validated["open_id"];
-
-      $res = DB::table("users")->select("avatar","name","description","type","token","access_token","online")->where($map)->first();
+      // Check by email first (most reliable for social login)
+      $res = null;
+      if (!empty($validated["email"])) {
+        $res = DB::table("users")->select("avatar","name","description","type","token","access_token","online")->where("email", $validated["email"])->first();
+      }
+      
+      // If not found by email, check by type and open_id
       if(empty($res)){
+        $map=[];
+        $map["type"] = $validated["type"];
+        $map["open_id"] = $validated["open_id"];
+        $res = DB::table("users")->select("avatar","name","description","type","token","access_token","online")->where($map)->first();
+      }
+
+      if(empty($res)){
+        // Create new user
         $validated["token"] = md5(uniqid().rand(10000,99999));
         $validated["created_at"] = Carbon::now();
         $validated["access_token"] = md5(uniqid().rand(1000000,9999999));
@@ -51,15 +61,24 @@ class LoginController extends Controller
         return ["code" => 0, "data" => $user_res, "msg" => "success"];
       }
       
+      // Update existing user
       $access_token = md5(uniqid().rand(1000000,9999999));
       $expire_date = Carbon::now()->addDays(30);
-      DB::table("users")->where($map)->update(["access_token"=>$access_token,"expire_date"=>$expire_date]);
+      $update_data = [
+        "access_token" => $access_token,
+        "expire_date" => $expire_date,
+        "avatar" => $validated["avatar"] ?? $res->avatar,
+        "name" => $validated["name"] ?? $res->name,
+        "open_id" => $validated["open_id"] ?? $res->open_id,
+      ];
+      DB::table("users")->where("token", $res->token)->update($update_data);
       $res->access_token = $access_token;
       
       return ["code" => 0, "data" => $res, "msg" => "success"];
 
     } catch (Exception $e) {
-      return ["code" => -1, "data" => "", "msg" => $e];
+      Log::error('Login error: ' . $e->getMessage(), ['exception' => $e]);
+      return ["code" => -1, "data" => "", "msg" => $e->getMessage()];
     }
   }
   
