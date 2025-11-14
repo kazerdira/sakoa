@@ -369,17 +369,41 @@ class MessageController extends GetxController with WidgetsBindingObserver {
         break;
       case AppLifecycleState.resumed: //从后台切换前台，界面可见
         print("AppLifecycleState.resumed------");
+        // ✅ Set online when app resumes
+        await _setOnlineStatus(1);
         await CallVocieOrVideo();
         break;
       case AppLifecycleState.paused: // 界面不可见，后台
         print("AppLifecycleState.paused-----");
+        // ✅ Set offline when app goes to background
+        await _setOnlineStatus(0);
         break;
       case AppLifecycleState.detached: // APP结束时调用
         print("AppLifecycleState.detached------");
+        // ✅ Set offline when app closes
+        await _setOnlineStatus(0);
         break;
       case AppLifecycleState.hidden: // 新增的状态
         print("AppLifecycleState.hidden------");
+        // ✅ Set offline when app hidden
+        await _setOnlineStatus(0);
         break;
+    }
+  }
+
+  // ✅ Helper method to update online status in Firestore
+  Future<void> _setOnlineStatus(int status) async {
+    try {
+      final userToken = UserStore.to.profile.token ?? UserStore.to.token;
+      if (userToken.isNotEmpty) {
+        await db
+            .collection("user_profiles")
+            .doc(userToken)
+            .update({'online': status});
+        print('[MessageController] ✅ Set online status to $status');
+      }
+    } catch (e) {
+      print('[MessageController] ⚠️ Failed to update online status: $e');
     }
   }
 

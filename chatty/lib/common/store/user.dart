@@ -4,6 +4,7 @@ import 'package:sakoa/common/routes/names.dart';
 import 'package:sakoa/common/services/services.dart';
 import 'package:sakoa/common/values/values.dart';
 import 'package:get/get.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class UserStore extends GetxController {
   static UserStore get to => Get.find();
@@ -59,6 +60,21 @@ class UserStore extends GetxController {
   // 注销
   Future<void> onLogout() async {
     // if (_isLogin.value) await UserAPI.logout();
+
+    // ✅ FIX: Set online status to 0 (offline) in Firestore on logout
+    try {
+      final userToken = profile.token ?? token;
+      if (userToken.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection("user_profiles")
+            .doc(userToken)
+            .update({'online': 0});
+        print('[UserStore] ✅ Set online status to 0 on logout');
+      }
+    } catch (e) {
+      print('[UserStore] ⚠️ Failed to update online status on logout: $e');
+    }
+
     await StorageService.to.remove(STORAGE_USER_TOKEN_KEY);
     await StorageService.to.remove(STORAGE_USER_PROFILE_KEY);
     _isLogin.value = false;

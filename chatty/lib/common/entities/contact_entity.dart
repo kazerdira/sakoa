@@ -74,6 +74,52 @@ class ContactEntity {
       if (blocked_at != null) "blocked_at": blocked_at,
     };
   }
+
+  // ✨ CACHE SUPPORT: Serialize for GetStorage
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'user_token': user_token,
+      'contact_token': contact_token,
+      'user_name': user_name,
+      'user_avatar': user_avatar,
+      'user_online': user_online,
+      'contact_name': contact_name,
+      'contact_avatar': contact_avatar,
+      'contact_online': contact_online,
+      'status': status,
+      'requested_by': requested_by,
+      'requested_at': requested_at?.millisecondsSinceEpoch,
+      'accepted_at': accepted_at?.millisecondsSinceEpoch,
+      'blocked_at': blocked_at?.millisecondsSinceEpoch,
+    };
+  }
+
+  // ✨ CACHE SUPPORT: Deserialize from GetStorage
+  factory ContactEntity.fromJson(Map<String, dynamic> json) {
+    return ContactEntity(
+      id: json['id'],
+      user_token: json['user_token'],
+      contact_token: json['contact_token'],
+      user_name: json['user_name'],
+      user_avatar: json['user_avatar'],
+      user_online: json['user_online'],
+      contact_name: json['contact_name'],
+      contact_avatar: json['contact_avatar'],
+      contact_online: json['contact_online'],
+      status: json['status'],
+      requested_by: json['requested_by'],
+      requested_at: json['requested_at'] != null
+          ? Timestamp.fromMillisecondsSinceEpoch(json['requested_at'])
+          : null,
+      accepted_at: json['accepted_at'] != null
+          ? Timestamp.fromMillisecondsSinceEpoch(json['accepted_at'])
+          : null,
+      blocked_at: json['blocked_at'] != null
+          ? Timestamp.fromMillisecondsSinceEpoch(json['blocked_at'])
+          : null,
+    );
+  }
 }
 
 // User profile entity for search functionality

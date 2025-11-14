@@ -35,44 +35,69 @@ class MessagePage extends GetView<MessageController> {
             mainAxisAlignment: MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Container(
-                width: 44.w,
-                height: 44.w,
-                margin: EdgeInsets.only(top: 0.h, left: 0.w, right: 10.w),
-                decoration: BoxDecoration(
-                  color: AppColors.primarySecondaryBackground,
-                  borderRadius: BorderRadius.all(Radius.circular(22.w)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
-                      spreadRadius: 1,
-                      blurRadius: 2,
-                      offset: Offset(0, 1), // changes position of shadow
-                    ),
-                  ],
-                ),
-                child: item.avatar == null
-                    ? Image(
-                        image: AssetImage('assets/images/account_header.png'),
-                      )
-                    : CachedNetworkImage(
-                        imageUrl: item.avatar!,
-                        height: 44.w,
-                        width: 44.w,
-                        imageBuilder: (context, imageProvider) => Container(
-                          decoration: BoxDecoration(
-                            borderRadius:
-                                BorderRadius.all(Radius.circular(22.w)),
-                            image: DecorationImage(
-                                image: imageProvider, fit: BoxFit.fill
-                                // colorFilter: ColorFilter.mode(Colors.red, BlendMode.colorBurn),
-                                ),
-                          ),
+              Stack(
+                children: [
+                  Container(
+                    width: 44.w,
+                    height: 44.w,
+                    margin: EdgeInsets.only(top: 0.h, left: 0.w, right: 10.w),
+                    decoration: BoxDecoration(
+                      color: AppColors.primarySecondaryBackground,
+                      borderRadius: BorderRadius.all(Radius.circular(22.w)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          spreadRadius: 1,
+                          blurRadius: 2,
+                          offset: Offset(0, 1), // changes position of shadow
                         ),
-                        errorWidget: (context, url, error) => Image(
-                          image: AssetImage('assets/images/account_header.png'),
+                      ],
+                    ),
+                    child: item.avatar == null
+                        ? Image(
+                            image:
+                                AssetImage('assets/images/account_header.png'),
+                          )
+                        : CachedNetworkImage(
+                            imageUrl: item.avatar!,
+                            height: 44.w,
+                            width: 44.w,
+                            imageBuilder: (context, imageProvider) => Container(
+                              decoration: BoxDecoration(
+                                borderRadius:
+                                    BorderRadius.all(Radius.circular(22.w)),
+                                image: DecorationImage(
+                                    image: imageProvider, fit: BoxFit.fill
+                                    // colorFilter: ColorFilter.mode(Colors.red, BlendMode.colorBurn),
+                                    ),
+                              ),
+                            ),
+                            errorWidget: (context, url, error) => Image(
+                              image: AssetImage(
+                                  'assets/images/account_header.png'),
+                            ),
+                          ),
+                  ),
+                  // ✅ Online/Offline indicator (green = online, grey = offline)
+                  Positioned(
+                    right: 10.w,
+                    bottom: 0,
+                    child: Container(
+                      width: 12.w,
+                      height: 12.w,
+                      decoration: BoxDecoration(
+                        color: (item.online ?? 0) == 1
+                            ? Colors.green
+                            : Colors.grey.shade400,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 2,
                         ),
                       ),
+                    ),
+                  ),
+                ],
               ),
               // 右侧
               Container(

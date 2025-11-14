@@ -14,11 +14,17 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
+import 'package:get_storage/get_storage.dart'; // ✨ For contact caching
 
 import 'firebase_options.dart';
 
 Future<void> main() async {
   await Global.init();
+
+  // ✨ Initialize GetStorage for contact caching
+  await GetStorage.init('contacts_cache');
+  print('[Main] ✅ GetStorage initialized for contacts');
+
   runApp(MyApp());
   firebaseInit().whenComplete(() {
     FirebaseMassagingHandler.config();

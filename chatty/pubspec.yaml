@@ -66,6 +66,10 @@ dependencies:
   shared_preferences: ^2.0.13
   cached_network_image: ^3.2.0
   flutter_cache_manager: ^3.3.0
+  get_storage: ^2.1.1  # For contact caching
+  
+  # UI enhancements
+  shimmer: ^3.0.0  # For skeleton loaders
 
   # 加密安全 SHA
   crypto: ^3.0.1

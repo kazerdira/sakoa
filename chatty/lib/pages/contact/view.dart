@@ -7,6 +7,7 @@ import 'index.dart';
 import 'package:sakoa/common/values/values.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 
 class ContactPage extends GetView<ContactController> {
   AppBar _buildAppBar() {
@@ -213,111 +214,208 @@ class ContactPage extends GetView<ContactController> {
         ));
   }
 
-  Widget _buildContactItem(ContactEntity contact) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 10.h),
-      margin: EdgeInsets.symmetric(horizontal: 15.w, vertical: 5.h),
-      decoration: BoxDecoration(
-        color: AppColors.primarySecondaryBackground,
-        borderRadius: BorderRadius.circular(10.w),
-      ),
-      child: Row(
-        children: [
-          // Avatar with online status indicator
-          Stack(
-            children: [
-              Container(
-                width: 50.w,
-                height: 50.w,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(25.w),
-                ),
-                child: CachedNetworkImage(
-                  imageUrl: contact.contact_avatar ?? "",
-                  imageBuilder: (context, imageProvider) => Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(25.w),
-                      image: DecorationImage(
-                          image: imageProvider, fit: BoxFit.cover),
-                    ),
-                  ),
-                  errorWidget: (context, url, error) =>
-                      Icon(Icons.person, size: 50.w),
-                ),
-              ),
-              // Online/Offline status indicator
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 14.w,
-                  height: 14.w,
-                  decoration: BoxDecoration(
-                    color: (contact.contact_online ?? 0) == 1
-                        ? Colors.green
-                        : Colors.grey.shade400,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white,
-                      width: 2,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(width: 10.w),
-          // Name
-          Expanded(
-            child: Text(
-              contact.contact_name ?? "Unknown",
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primaryText,
+  /// ✨ SKELETON LOADER: Professional loading placeholder
+  Widget _buildContactSkeleton() {
+    return Shimmer.fromColors(
+      baseColor: AppColors.primarySecondaryBackground,
+      highlightColor: Colors.grey.shade300,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 10.h),
+        margin: EdgeInsets.symmetric(horizontal: 15.w, vertical: 5.h),
+        decoration: BoxDecoration(
+          color: AppColors.primarySecondaryBackground,
+          borderRadius: BorderRadius.circular(10.w),
+        ),
+        child: Row(
+          children: [
+            // Avatar skeleton
+            Container(
+              width: 50.w,
+              height: 50.w,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(25.w),
               ),
             ),
-          ),
-          // Chat button
-          IconButton(
-            icon: Icon(Icons.chat, color: AppColors.primaryElement),
-            onPressed: () {
-              // Use original goChat from ContactController
-              controller.goChat(ContactItem(
-                token: contact.contact_token,
-                name: contact.contact_name,
-                avatar: contact.contact_avatar,
-                online: contact.contact_online ?? 1,
-              ));
-            },
-          ),
-          // Block button
-          IconButton(
-            icon: Icon(Icons.block, color: Colors.red),
-            onPressed: () {
-              Get.defaultDialog(
-                title: "Block ${contact.contact_name}?",
-                middleText:
-                    "Are you sure you want to block ${contact.contact_name}? They will be removed from your contacts and won't be able to send you messages.",
-                textConfirm: "Block",
-                textCancel: "Cancel",
-                confirmTextColor: Colors.white,
-                buttonColor: Colors.red,
-                cancelTextColor: Colors.grey,
-                onConfirm: () {
-                  Get.back(); // Close dialog
-                  controller.blockUser(
-                    contact.contact_token ?? "",
-                    contact.contact_name ?? "",
-                    contact.contact_avatar ?? "",
-                  );
-                },
-              );
-            },
-          ),
-        ],
+            SizedBox(width: 10.w),
+            // Name skeleton
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 120.w,
+                    height: 14.h,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4.w),
+                    ),
+                  ),
+                  SizedBox(height: 6.h),
+                  Container(
+                    width: 80.w,
+                    height: 10.h,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4.w),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Buttons skeleton
+            Container(
+              width: 40.w,
+              height: 40.w,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20.w),
+              ),
+            ),
+            SizedBox(width: 10.w),
+            Container(
+              width: 40.w,
+              height: 40.w,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20.w),
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Widget _buildContactItem(ContactEntity contact, {int index = 0}) {
+    return TweenAnimationBuilder<double>(
+      duration:
+          Duration(milliseconds: 300 + (index * 50)), // ✨ Staggered animation
+      tween: Tween(begin: 0.0, end: 1.0),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        return Transform.translate(
+          offset: Offset(0, 20 * (1 - value)), // ✨ Slide up effect
+          child: Opacity(
+            opacity: value, // ✨ Fade in effect
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 10.h),
+        margin: EdgeInsets.symmetric(horizontal: 15.w, vertical: 5.h),
+        decoration: BoxDecoration(
+          color: AppColors.primarySecondaryBackground,
+          borderRadius: BorderRadius.circular(10.w),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              spreadRadius: 1,
+              blurRadius: 3,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Avatar with online status indicator
+            Stack(
+              children: [
+                Container(
+                  width: 50.w,
+                  height: 50.w,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(25.w),
+                  ),
+                  child: CachedNetworkImage(
+                    imageUrl: contact.contact_avatar ?? "",
+                    imageBuilder: (context, imageProvider) => Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(25.w),
+                        image: DecorationImage(
+                            image: imageProvider, fit: BoxFit.cover),
+                      ),
+                    ),
+                    errorWidget: (context, url, error) =>
+                        Icon(Icons.person, size: 50.w),
+                  ),
+                ),
+                // Online/Offline status indicator
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 14.w,
+                    height: 14.w,
+                    decoration: BoxDecoration(
+                      color: (contact.contact_online ?? 0) == 1
+                          ? Colors.green
+                          : Colors.grey.shade400,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(width: 10.w),
+            // Name
+            Expanded(
+              child: Text(
+                contact.contact_name ?? "Unknown",
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primaryText,
+                ),
+              ),
+            ),
+            // Chat button
+            IconButton(
+              icon: Icon(Icons.chat, color: AppColors.primaryElement),
+              onPressed: () {
+                // Use original goChat from ContactController
+                controller.goChat(ContactItem(
+                  token: contact.contact_token,
+                  name: contact.contact_name,
+                  avatar: contact.contact_avatar,
+                  online: contact.contact_online ??
+                      0, // ✅ Default to offline, not online!
+                ));
+              },
+            ),
+            // Block button
+            IconButton(
+              icon: Icon(Icons.block, color: Colors.red),
+              onPressed: () {
+                Get.defaultDialog(
+                  title: "Block ${contact.contact_name}?",
+                  middleText:
+                      "Are you sure you want to block ${contact.contact_name}? They will be removed from your contacts and won't be able to send you messages.",
+                  textConfirm: "Block",
+                  textCancel: "Cancel",
+                  confirmTextColor: Colors.white,
+                  buttonColor: Colors.red,
+                  cancelTextColor: Colors.grey,
+                  onConfirm: () {
+                    Get.back(); // Close dialog
+                    controller.blockUser(
+                      contact.contact_token ?? "",
+                      contact.contact_name ?? "",
+                      contact.contact_avatar ?? "",
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    ); // ✨ Close TweenAnimationBuilder
   }
 
   Widget _buildRequestItem(ContactEntity request) {
@@ -641,6 +739,16 @@ class ContactPage extends GetView<ContactController> {
                         int selectedTab = controller.state.selectedTab.value;
 
                         if (selectedTab == 0) {
+                          // ✨ SKELETON LOADERS: Show during initial loading (cache hit shows content instantly!)
+                          if (controller.state.acceptedContacts.isEmpty &&
+                              controller.state.isLoadingContacts.value) {
+                            return ListView.builder(
+                              itemCount: 8,
+                              itemBuilder: (context, index) =>
+                                  _buildContactSkeleton(),
+                            );
+                          }
+
                           // Accepted Contacts with Pull-to-Refresh and Pagination
                           if (controller.state.acceptedContacts.isEmpty &&
                               !controller.state.isLoadingContacts.value) {
@@ -727,8 +835,12 @@ class ContactPage extends GetView<ContactController> {
                                               )
                                             : SizedBox.shrink());
                                       }
-                                      return _buildContactItem(controller
-                                          .state.acceptedContacts[index]);
+                                      return _buildContactItem(
+                                        controller
+                                            .state.acceptedContacts[index],
+                                        index:
+                                            index, // ✨ Pass index for staggered animation
+                                      );
                                     },
                                   )),
                             ),
