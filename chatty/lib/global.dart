@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:sakoa/common/services/services.dart';
 import 'package:sakoa/common/services/presence_service.dart';
 import 'package:sakoa/common/services/chat_manager_service.dart';
+import 'package:sakoa/common/services/blocking_service.dart';
+import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/utils/utils.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -32,7 +34,14 @@ class Global {
     print('[Global] 🚀 Initializing ChatManagerService...');
     Get.put(ChatManagerService());
 
-    print('[Global] ✅ All services initialized');
+    print('[Global] 🚀 Initializing BlockingService...');
+    await Get.putAsync(() => BlockingService().init());
+
+    print('[Global] 🚀 Initializing ChatSecurityService...');
+    Get.put(ChatSecurityService());
+
+    print(
+        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security)');
   }
 
   static void setSystemUi() {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:sakoa/common/apis/apis.dart';
 import 'package:sakoa/common/routes/names.dart';
 import 'package:sakoa/common/utils/utils.dart';
@@ -18,6 +19,9 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart';
 import 'package:sakoa/pages/contact/index.dart';
+import 'package:sakoa/common/services/blocking_service.dart';
+import 'package:sakoa/common/services/chat_security_service.dart';
+import 'package:sakoa/common/widgets/block_settings_dialog.dart';
 
 class ChatController extends GetxController {
   ChatController();
@@ -34,6 +38,11 @@ class ChatController extends GetxController {
   final token = UserStore.to.profile.token;
   File? _photo;
   final ImagePicker _picker = ImagePicker();
+
+  // 🔥 INDUSTRIAL-GRADE BLOCKING SYSTEM
+  final isBlocked = false.obs;
+  final blockStatus = Rx<BlockStatus?>(null);
+  StreamSubscription? _blockListener;
 
   goMore() {
     state.more_status.value = state.more_status.value ? false : true;
@@ -97,6 +106,13 @@ class ChatController extends GetxController {
 
   sendMessage() async {
     print("---------------chat-----------------");
+
+    // 🔥 BLOCKING CHECK
+    if (isBlocked.value) {
+      toastInfo(msg: "Cannot send message to blocked user");
+      return;
+    }
+
     String sendcontent = myinputController.text;
     if (sendcontent.isEmpty) {
       toastInfo(msg: "content not empty");
@@ -153,6 +169,13 @@ class ChatController extends GetxController {
 
   sendImageMessage(String url) async {
     state.more_status.value = false;
+
+    // 🔥 BLOCKING CHECK
+    if (isBlocked.value) {
+      toastInfo(msg: "Cannot send image to blocked user");
+      return;
+    }
+
     print("---------------chat-----------------");
     final content = Msgcontent(
       token: token,
@@ -281,21 +304,32 @@ class ChatController extends GetxController {
     print("------close_all_pop");
   }
 
-  /// Verify contact and block status before allowing chat
+  /// 🔥 ENHANCED: Verify contact and block status before allowing chat
   Future<void> _verifyContactStatus() async {
     try {
-      final contactController = Get.find<ContactController>();
+      // Priority 1: Check BlockingService (industrial-grade)
+      final blockingService = BlockingService.to;
+      final status = await blockingService.getBlockStatus(state.to_token.value);
 
-      // Check if user is blocked
-      bool isBlocked =
-          await contactController.isUserBlocked(state.to_token.value);
-      if (isBlocked) {
-        toastInfo(msg: "This user is blocked. Please unblock to chat.");
-        Get.back();
-        return;
+      if (status.isBlocked) {
+        isBlocked.value = true;
+        blockStatus.value = status;
+
+        // Apply security restrictions if I blocked them
+        if (status.iBlocked) {
+          await ChatSecurityService.to.applyRestrictions(
+            chatDocId: doc_id,
+            otherUserToken: state.to_token.value,
+          );
+        }
+
+        print(
+            "[ChatController] ✅ User is blocked: iBlocked=${status.iBlocked}, theyBlocked=${status.theyBlocked}");
+        return; // Allow viewing chat but disable input
       }
 
-      // Check if user is contact
+      // Priority 2: Check ContactController
+      final contactController = Get.find<ContactController>();
       bool isContact =
           await contactController.isUserContact(state.to_token.value);
       if (!isContact) {
@@ -303,25 +337,135 @@ class ChatController extends GetxController {
         Get.back();
         return;
       }
+
+      print("[ChatController] ✅ Contact verified, not blocked");
     } catch (e) {
-      print("[ChatController] Error verifying contact status: $e");
+      print("[ChatController] ❌ Error verifying contact status: $e");
     }
   }
 
-  /// Block this user from chat
-  Future<void> blockThisUser() async {
+  /// 🔥 Start real-time block monitoring
+  void _startBlockMonitoring() {
+    _blockListener?.cancel();
+
+    _blockListener = BlockingService.to
+        .watchBlockStatus(state.to_token.value)
+        .listen((status) {
+      print("[ChatController] 🔄 Block status changed: ${status.isBlocked}");
+
+      isBlocked.value = status.isBlocked;
+      blockStatus.value = status;
+
+      if (status.isBlocked && status.iBlocked) {
+        // I blocked them - apply restrictions
+        ChatSecurityService.to.applyRestrictions(
+          chatDocId: doc_id,
+          otherUserToken: state.to_token.value,
+        );
+        toastInfo(msg: "User blocked with restrictions");
+      } else if (!status.isBlocked) {
+        // Unblocked - clear restrictions
+        ChatSecurityService.to.clearRestrictions();
+        toastInfo(msg: "User unblocked");
+      }
+    });
+  }
+
+  /// 🔥 Block user from chat with settings dialog
+  Future<void> blockUserFromChat(BuildContext context) async {
     try {
-      final contactController = Get.find<ContactController>();
-      await contactController.blockUser(
-        state.to_token.value,
-        state.to_name.value,
-        state.to_avatar.value,
+      // Show confirmation
+      final confirm = await Get.dialog<bool>(
+        AlertDialog(
+          title: Text("Block ${state.to_name.value}?"),
+          content: Text("Choose privacy restrictions for this chat."),
+          actions: [
+            TextButton(
+              onPressed: () => Get.back(result: false),
+              child: Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () => Get.back(result: true),
+              child: Text("Next", style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
       );
-      toastInfo(msg: "${state.to_name.value} has been blocked");
-      Get.back(); // Return to messages list
+
+      if (confirm != true) return;
+
+      // Show restriction settings dialog
+      final restrictions = await BlockSettingsDialog.show(
+        context: context,
+        userName: state.to_name.value,
+      );
+
+      if (restrictions == null) return; // User cancelled
+
+      // Block user with selected restrictions
+      final success = await BlockingService.to.blockUser(
+        userToken: state.to_token.value,
+        userName: state.to_name.value,
+        userAvatar: state.to_avatar.value,
+        restrictions: restrictions,
+      );
+
+      if (success) {
+        isBlocked.value = true;
+        toastInfo(msg: "${state.to_name.value} has been blocked");
+
+        // Apply restrictions immediately
+        await ChatSecurityService.to.applyRestrictions(
+          chatDocId: doc_id,
+          otherUserToken: state.to_token.value,
+        );
+      } else {
+        toastInfo(msg: "Failed to block user");
+      }
     } catch (e) {
-      print("[ChatController] Error blocking user: $e");
+      print("[ChatController] ❌ Error blocking user: $e");
       toastInfo(msg: "Failed to block user");
+    }
+  }
+
+  /// 🔥 Unblock user from chat
+  Future<void> unblockUserFromChat() async {
+    try {
+      // Show confirmation
+      final confirm = await Get.dialog<bool>(
+        AlertDialog(
+          title: Text("Unblock ${state.to_name.value}?"),
+          content: Text("This user will be able to chat with you again."),
+          actions: [
+            TextButton(
+              onPressed: () => Get.back(result: false),
+              child: Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () => Get.back(result: true),
+              child: Text("Unblock", style: TextStyle(color: Colors.green)),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm != true) return;
+
+      // Unblock user
+      final success =
+          await BlockingService.to.unblockUser(state.to_token.value);
+
+      if (success) {
+        isBlocked.value = false;
+        blockStatus.value = null;
+        await ChatSecurityService.to.clearRestrictions();
+        toastInfo(msg: "${state.to_name.value} has been unblocked");
+      } else {
+        toastInfo(msg: "Failed to unblock user");
+      }
+    } catch (e) {
+      print("[ChatController] ❌ Error unblocking user: $e");
+      toastInfo(msg: "Failed to unblock user");
     }
   }
 
@@ -338,8 +482,9 @@ class ChatController extends GetxController {
     state.to_avatar.value = data["to_avatar"] ?? "";
     state.to_online.value = data["to_online"] ?? "1";
 
-    // Check contact status before allowing chat
-    _verifyContactStatus();
+    // 🔥 INDUSTRIAL-GRADE BLOCKING SYSTEM
+    _verifyContactStatus(); // Enhanced with BlockingService
+    _startBlockMonitoring(); // Real-time updates
 
     clear_msg_num(doc_id);
   }
@@ -419,6 +564,10 @@ class ChatController extends GetxController {
     super.onClose();
     print("onClose-------");
     clear_msg_num(doc_id);
+
+    // 🔥 Cleanup blocking resources
+    _blockListener?.cancel();
+    ChatSecurityService.to.clearRestrictions();
   }
 
   @override
