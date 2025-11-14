@@ -303,6 +303,128 @@ class LoginController extends Controller
         }
   }
   
+  // Send contact request notification (follows send_notice pattern)
+  public function send_contact_request_notification(Request $request){
+      $user_token = $request->user_token;
+      $user_avatar = $request->user_avatar;
+      $user_name = $request->user_name;
+      $to_token = $request->input("to_token");
+      
+      // Get receiver's FCM token
+      $res = DB::table("users")->select("fcmtoken")->where("token", "=", $to_token)->first();
+      if(empty($res)){
+          return ["code" => -1, "data" => "", "msg" => "user not exist"];  
+      }
+      
+      $deviceToken = $res->fcmtoken;
+      
+      try {
+          if(!empty($deviceToken)){
+              $messaging = app('firebase.messaging');
+              $message = CloudMessage::fromArray([
+                  'token' => $deviceToken,
+                  'data' => [
+                      'token' => $user_token,
+                      'avatar' => $user_avatar,
+                      'name' => $user_name,
+                      'call_type' => 'contact_request',
+                  ],
+                  'android' => [
+                      "priority" => "high",
+                      "notification" => [
+                          "channel_id" => "com.example.sakoa.message",
+                          'title' => "New Contact Request",
+                          'body' => $user_name . " wants to add you as a contact",
+                      ]
+                  ],
+                  'apns' => [
+                      'headers' => [
+                          'apns-priority' => '10',
+                      ],
+                      'payload' => [
+                          'aps' => [
+                              'alert' => [
+                                  'title' => "New Contact Request",
+                                  'body' => $user_name . " wants to add you as a contact",
+                              ],
+                              'badge' => 1,
+                              'sound' => 'ding.caf'
+                          ],
+                      ],
+                  ],
+              ]);
+              
+              $messaging->send($message);
+          }
+          
+          return ["code" => 0, "data" => "", "msg" => "success"];
+          
+      } catch (\Exception $exception) {
+          return ["code" => -1, "data" => "", "msg" => "Exception"];
+      }
+  }
+  
+  // Send contact accepted notification (follows send_notice pattern)
+  public function send_contact_accepted_notification(Request $request){
+      $user_token = $request->user_token;
+      $user_avatar = $request->user_avatar;
+      $user_name = $request->user_name;
+      $to_token = $request->input("to_token");
+      
+      // Get receiver's FCM token
+      $res = DB::table("users")->select("fcmtoken")->where("token", "=", $to_token)->first();
+      if(empty($res)){
+          return ["code" => -1, "data" => "", "msg" => "user not exist"];  
+      }
+      
+      $deviceToken = $res->fcmtoken;
+      
+      try {
+          if(!empty($deviceToken)){
+              $messaging = app('firebase.messaging');
+              $message = CloudMessage::fromArray([
+                  'token' => $deviceToken,
+                  'data' => [
+                      'token' => $user_token,
+                      'avatar' => $user_avatar,
+                      'name' => $user_name,
+                      'call_type' => 'contact_accepted',
+                  ],
+                  'android' => [
+                      "priority" => "high",
+                      "notification" => [
+                          "channel_id" => "com.example.sakoa.message",
+                          'title' => "Contact Request Accepted",
+                          'body' => $user_name . " accepted your contact request",
+                      ]
+                  ],
+                  'apns' => [
+                      'headers' => [
+                          'apns-priority' => '10',
+                      ],
+                      'payload' => [
+                          'aps' => [
+                              'alert' => [
+                                  'title' => "Contact Request Accepted",
+                                  'body' => $user_name . " accepted your contact request",
+                              ],
+                              'badge' => 1,
+                              'sound' => 'ding.caf'
+                          ],
+                      ],
+                  ],
+              ]);
+              
+              $messaging->send($message);
+          }
+          
+          return ["code" => 0, "data" => "", "msg" => "success"];
+          
+      } catch (\Exception $exception) {
+          return ["code" => -1, "data" => "", "msg" => "Exception"];
+      }
+  }
+  
   public function send_notice_test(){
           $deviceToken = "d9Zbwl67Ro2IgFm0jFoAlt:APA91bEhU_Ve7o6_aWUt3ex1ML_cyWPMO0t5nHBcLCLFpFkeDQa__akuPL6RciGilpOevgdZDA2Zw6Z1JgZ5746eld9R9nvGH_BWyAnNe7B6q_JK38kbbwnboYdtuxMC7MzpiOysuf40";
        $messaging = app('firebase.messaging');

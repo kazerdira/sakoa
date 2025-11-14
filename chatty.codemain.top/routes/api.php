@@ -32,6 +32,8 @@ Route::group(['namespace' => 'Api'], function(){
     Route::any('/contact','LoginController@contact')->middleware('UserCheck');
     Route::any('/upload_photo','LoginController@upload_photo')->middleware('UserCheck');
     Route::any('/send_notice','LoginController@send_notice')->middleware('UserCheck');
+    Route::any('/send_contact_request_notification','LoginController@send_contact_request_notification')->middleware('UserCheck');
+    Route::any('/send_contact_accepted_notification','LoginController@send_contact_accepted_notification')->middleware('UserCheck');
     Route::any('/get_rtc_token','AccessTokenController@get_rtc_token')->middleware('UserCheck');
     Route::any('/send_notice_test','LoginController@send_notice_test'); 
  

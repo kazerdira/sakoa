@@ -956,6 +956,33 @@ class ContactController extends GetxController {
       print(
           "[ContactController] 📤 Receiver should see: contact_token='${user.token}', status='pending'");
 
+      // Send push notification to the receiver (following call_notifications pattern)
+      try {
+        print(
+            "[ContactController] 🔔 Sending contact request notification to ${user.token}");
+
+        CallRequestEntity notificationEntity = CallRequestEntity();
+        notificationEntity.to_token = user.token;
+        notificationEntity.to_name = user.name;
+        notificationEntity.to_avatar = user.avatar;
+        // No need to set call_type - backend will use 'contact_request'
+
+        var res = await ChatAPI.send_contact_request_notification(
+            params: notificationEntity);
+
+        if (res.code == 0) {
+          print(
+              "[ContactController] ✅ Contact request notification sent successfully");
+        } else {
+          print(
+              "[ContactController] ⚠️ Notification failed with code: ${res.code}");
+        }
+      } catch (notifError) {
+        print(
+            "[ContactController] ⚠️ Failed to send notification: $notifError");
+        // Don't fail the entire request if notification fails
+      }
+
       EasyLoading.dismiss();
       toastInfo(msg: "✓ Request sent to ${user.name}!");
       state.relationshipStatus[user.token!] = 'pending_sent';
@@ -999,6 +1026,33 @@ class ContactController extends GetxController {
         "status": "accepted",
         "accepted_at": Timestamp.now(),
       });
+
+      // Send push notification to the original requester (following call_notifications pattern)
+      try {
+        print(
+            "[ContactController] 🔔 Sending contact accepted notification to ${contact.user_token}");
+
+        CallRequestEntity notificationEntity = CallRequestEntity();
+        notificationEntity.to_token = contact.user_token;
+        notificationEntity.to_name = contact.user_name;
+        notificationEntity.to_avatar = contact.user_avatar;
+        // No need to set call_type - backend will use 'contact_accepted'
+
+        var res = await ChatAPI.send_contact_accepted_notification(
+            params: notificationEntity);
+
+        if (res.code == 0) {
+          print(
+              "[ContactController] ✅ Contact accepted notification sent successfully");
+        } else {
+          print(
+              "[ContactController] ⚠️ Notification failed with code: ${res.code}");
+        }
+      } catch (notifError) {
+        print(
+            "[ContactController] ⚠️ Failed to send notification: $notifError");
+        // Don't fail the entire accept if notification fails
+      }
 
       EasyLoading.dismiss();
       toastInfo(msg: "✓ ${contact.user_name} is now your contact!");
