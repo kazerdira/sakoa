@@ -14,6 +14,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:sakoa/common/store/store.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:sakoa/pages/contact/index.dart';
+import 'package:sakoa/common/services/presence_service.dart';
+import 'package:sakoa/common/services/chat_manager_service.dart';
 
 class MessageController extends GetxController with WidgetsBindingObserver {
   MessageController();
@@ -21,6 +23,10 @@ class MessageController extends GetxController with WidgetsBindingObserver {
   final MessageState state = MessageState();
   final token = UserStore.to.profile.token;
   final db = FirebaseFirestore.instance;
+
+  // 🔥 Industrial-grade services for presence and chat management
+  late final PresenceService _presence;
+  late final ChatManagerService _chatManager;
 
   goProfile() async {
     var result = await Get.toNamed(AppRoutes.Profile,
@@ -45,47 +51,47 @@ class MessageController extends GetxController with WidgetsBindingObserver {
   }
 
   asyncLoadMsgData() async {
-    print("-----------state.msgList");
-    print(state.msgList);
-    var token = UserStore.to.profile.token;
+    try {
+      print(
+          "[MessageController] 🔄 Loading messages via ChatManagerService...");
+      state.isLoading.value = true;
+      state.errorMessage.value = '';
 
-    var from_messages = await db
-        .collection("message")
-        .withConverter(
-          fromFirestore: Msg.fromFirestore,
-          toFirestore: (Msg msg, options) => msg.toFirestore(),
-        )
-        .where("from_token", isEqualTo: token)
-        .get();
-    print(from_messages.docs.length);
+      // 🔥 Use ChatManagerService for filtered chat list
+      // This removes empty chats, blocked users, and non-contacts automatically
+      final chatList = await _chatManager.getFilteredChatList();
 
-    var to_messages = await db
-        .collection("message")
-        .withConverter(
-          fromFirestore: Msg.fromFirestore,
-          toFirestore: (Msg msg, options) => msg.toFirestore(),
-        )
-        .where("to_token", isEqualTo: token)
-        .get();
-    print("to_messages.docs.length------------");
-    print(to_messages.docs.length);
-    state.msgList.clear();
+      state.msgList.value = chatList;
+      state.isEmpty.value = chatList.isEmpty;
 
-    if (from_messages.docs.isNotEmpty) {
-      await addMessage(from_messages.docs);
-    }
-    if (to_messages.docs.isNotEmpty) {
-      await addMessage(to_messages.docs);
-    }
-    // sort
-    state.msgList.sort((a, b) {
-      if (b.last_time == null) {
-        return 0;
+      print("[MessageController] ✅ Loaded ${chatList.length} chats");
+
+      // Update presence status for all chat users
+      for (var chat in chatList) {
+        if (chat.token != null) {
+          _updatePresenceForUser(chat.token!);
+        }
       }
-      if (a.last_time == null) {
-        return 0;
+    } catch (e) {
+      print("[MessageController] ❌ Error loading messages: $e");
+      state.errorMessage.value = 'Failed to load messages: $e';
+    } finally {
+      state.isLoading.value = false;
+    }
+  }
+
+  /// Updates presence status for a specific user
+  void _updatePresenceForUser(String userToken) {
+    _presence.watchPresence(userToken).listen((presenceData) {
+      state.onlineStatus[userToken] = presenceData.online;
+      state.lastSeen[userToken] = presenceData.lastSeenText;
+
+      // Update the corresponding message in the list
+      final index = state.msgList.indexWhere((msg) => msg.token == userToken);
+      if (index != -1) {
+        state.msgList[index].online = presenceData.online;
+        state.msgList.refresh();
       }
-      return b.last_time!.compareTo(a.last_time!);
     });
   }
 
@@ -337,6 +343,13 @@ class MessageController extends GetxController with WidgetsBindingObserver {
   @override
   void onInit() {
     super.onInit();
+
+    // 🔥 Initialize services via dependency injection
+    print("[MessageController] 🚀 Initializing services...");
+    _presence = Get.find<PresenceService>();
+    _chatManager = Get.find<ChatManagerService>();
+    print("[MessageController] ✅ Services initialized");
+
     getProfile();
     _snapshots();
   }
@@ -356,54 +369,38 @@ class MessageController extends GetxController with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    print("[MessageController] 🧹 Cleaning up...");
     WidgetsBinding.instance.removeObserver(this);
+    // Presence service cleanup is handled by its own dispose()
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
-    print("-didChangeAppLifecycleState-" + state.toString());
+    print("[MessageController] 🔄 App lifecycle changed: ${state.toString()}");
     switch (state) {
-      case AppLifecycleState.inactive: // 处于这种状态的应用程序应该假设它们可能在任何时候暂停。
-        print("AppLifecycleState.inactive-----");
+      case AppLifecycleState.inactive:
+        print("[MessageController] ⏸️ App inactive (may pause soon)");
         break;
-      case AppLifecycleState.resumed: //从后台切换前台，界面可见
-        print("AppLifecycleState.resumed------");
-        // ✅ Set online when app resumes
-        await _setOnlineStatus(1);
+      case AppLifecycleState.resumed:
+        print("[MessageController] ▶️ App resumed");
+        // 🔥 Use PresenceService with heartbeat system
+        await _presence.setOnline();
         await CallVocieOrVideo();
         break;
-      case AppLifecycleState.paused: // 界面不可见，后台
-        print("AppLifecycleState.paused-----");
-        // ✅ Set offline when app goes to background
-        await _setOnlineStatus(0);
+      case AppLifecycleState.paused:
+        print("[MessageController] ⏸️ App paused (backgrounded)");
+        // 🔥 PresenceService handles offline gracefully
+        await _presence.setOffline();
         break;
-      case AppLifecycleState.detached: // APP结束时调用
-        print("AppLifecycleState.detached------");
-        // ✅ Set offline when app closes
-        await _setOnlineStatus(0);
+      case AppLifecycleState.detached:
+        print("[MessageController] 🛑 App detached (closing)");
+        await _presence.setOffline();
         break;
-      case AppLifecycleState.hidden: // 新增的状态
-        print("AppLifecycleState.hidden------");
-        // ✅ Set offline when app hidden
-        await _setOnlineStatus(0);
+      case AppLifecycleState.hidden:
+        print("[MessageController] 🫥 App hidden");
+        await _presence.setOffline();
         break;
-    }
-  }
-
-  // ✅ Helper method to update online status in Firestore
-  Future<void> _setOnlineStatus(int status) async {
-    try {
-      final userToken = UserStore.to.profile.token ?? UserStore.to.token;
-      if (userToken.isNotEmpty) {
-        await db
-            .collection("user_profiles")
-            .doc(userToken)
-            .update({'online': status});
-        print('[MessageController] ✅ Set online status to $status');
-      }
-    } catch (e) {
-      print('[MessageController] ⚠️ Failed to update online status: $e');
     }
   }
 
