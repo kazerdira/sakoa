@@ -15,29 +15,77 @@ class ContactController extends GetxController {
   ContactController();
   final ContactState state = ContactState();
   final db = FirebaseFirestore.instance;
-  // ✅ CRITICAL FIX: Use profile.token for Firestore queries!
-  // UserStore.to.token = access_token (JWT for API, changes on login)
-  // UserStore.to.profile.token = permanent Firestore user ID (NEVER changes)
-  // Contacts collection uses profile.token as user_token/contact_token!
-  String get token {
-    return UserStore.to.profile.token ?? UserStore.to.token;
-  }
+  
+  // CRITICAL: Use access_token, not profile.token!
+  final token = UserStore.to.token;
 
   // Real-time listeners
   var contactsListener;
   var requestsListener;
+  var onlineStatusListener;
+
+  @override
+  void onInit() {
+    super.onInit();
+    print("[ContactController] 🚀 Initializing with token: $token");
+  }
+
+  @override
+  void onReady() {
+    super.onReady();
+    print("[ContactController] 🎬 onReady - Starting data load");
+    
+    // Load data in sequence to avoid race conditions
+    _initializeData();
+  }
+
+  /// Initialize all data in proper sequence
+  Future<void> _initializeData() async {
+    try {
+      print("[ContactController] 📊 Step 1: Building relationship map");
+      await _updateRelationshipMap();
+      
+      print("[ContactController] 📊 Step 2: Loading accepted contacts");
+      await loadAcceptedContacts(refresh: true);
+      
+      print("[ContactController] 📊 Step 3: Loading pending requests");
+      await loadPendingRequests();
+      
+      print("[ContactController] 📊 Step 4: Loading sent requests");
+      await loadSentRequests();
+      
+      print("[ContactController] 📊 Step 5: Loading blocked users");
+      await loadBlockedUsers();
+      
+      print("[ContactController] 📊 Step 6: Setting up real-time listeners");
+      _setupRealtimeListeners();
+      
+      print("[ContactController] ✅ Initialization complete!");
+      print("[ContactController] 📈 Stats:");
+      print("   - Accepted Contacts: ${state.acceptedContacts.length}");
+      print("   - Pending Requests: ${state.pendingRequests.length}");
+      print("   - Sent Requests: ${state.sentRequests.length}");
+      print("   - Blocked Users: ${state.blockedList.length}");
+      
+    } catch (e, stackTrace) {
+      print("[ContactController] ❌ Initialization error: $e");
+      print("[ContactController] Stack: $stackTrace");
+      toastInfo(msg: "Failed to load contacts. Please restart the app.");
+    }
+  }
 
   /// Setup real-time Firestore listeners for instant updates
   void _setupRealtimeListeners() {
+    print("[ContactController] 🔥 Setting up real-time listeners");
+
     // Listen to contacts where I'm the user (outgoing)
     contactsListener = db
         .collection("contacts")
         .where("user_token", isEqualTo: token)
         .snapshots()
         .listen((snapshot) {
-      _updateRelationshipMap();
-      loadSentRequests();
-      loadBlockedUsers();
+      print("[ContactController] 🔥 Outgoing contacts changed! Count: ${snapshot.docs.length}");
+      _handleContactsUpdate();
     }, onError: (error) {
       print("[ContactController] ❌ Error in contacts listener: $error");
     });
@@ -48,46 +96,57 @@ class ContactController extends GetxController {
         .where("contact_token", isEqualTo: token)
         .snapshots()
         .listen((snapshot) {
-      _updateRelationshipMap();
-      loadPendingRequests();
+      print("[ContactController] 🔥 Incoming requests changed! Count: ${snapshot.docs.length}");
+      _handleRequestsUpdate();
     }, onError: (error) {
       print("[ContactController] ❌ Error in requests listener: $error");
     });
 
-    // Listen to online status changes for all cached profiles
+    // Listen to online status changes
     _setupOnlineStatusListener();
+  }
+
+  /// Handle real-time contact updates
+  Future<void> _handleContactsUpdate() async {
+    print("[ContactController] 🔄 Handling contacts update");
+    await _updateRelationshipMap();
+    await loadAcceptedContacts(refresh: true);
+    await loadSentRequests();
+    await loadBlockedUsers();
+  }
+
+  /// Handle real-time request updates
+  Future<void> _handleRequestsUpdate() async {
+    print("[ContactController] 🔄 Handling requests update");
+    await _updateRelationshipMap();
+    await loadPendingRequests();
   }
 
   /// Listen to online status changes for contacts in real-time
   void _setupOnlineStatusListener() {
-    // Cancel existing listener
-    state.onlineStatusListener?.cancel();
-
-    // Listen to user_profiles changes for cached users
-    state.onlineStatusListener =
-        db.collection("user_profiles").snapshots().listen((snapshot) {
+    onlineStatusListener = db
+        .collection("user_profiles")
+        .snapshots()
+        .listen((snapshot) {
       for (var change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.modified) {
-          String token = change.doc.id;
+          String userToken = change.doc.id;
           var data = change.doc.data();
 
-          // Update cache if this user is in our profile cache
-          if (state.profileCache.containsKey(token) && data != null) {
+          if (state.profileCache.containsKey(userToken) && data != null) {
             int newOnlineStatus = data['online'] ?? 0;
-            int oldOnlineStatus = state.profileCache[token]?.online ?? 0;
+            int oldOnlineStatus = state.profileCache[userToken]?.online ?? 0;
 
             if (newOnlineStatus != oldOnlineStatus) {
-              print(
-                  "[ContactController] 🟢 Online status changed for $token: $oldOnlineStatus → $newOnlineStatus");
-
-              // Update cached profile
-              state.profileCache[token]?.online = newOnlineStatus;
+              print("[ContactController] 🟢 Online status changed for $userToken: $oldOnlineStatus → $newOnlineStatus");
+              
+              state.profileCache[userToken]?.online = newOnlineStatus;
 
               // Update contacts list
               for (int i = 0; i < state.acceptedContacts.length; i++) {
-                if (state.acceptedContacts[i].contact_token == token) {
+                if (state.acceptedContacts[i].contact_token == userToken) {
                   state.acceptedContacts[i].contact_online = newOnlineStatus;
-                  state.acceptedContacts.refresh(); // Trigger UI update
+                  state.acceptedContacts.refresh();
                   break;
                 }
               }
@@ -100,9 +159,10 @@ class ContactController extends GetxController {
     });
   }
 
-  /// Build relationship status map for quick lookups - ENHANCED LOGIC
+  /// Build relationship status map for quick lookups
   Future<void> _updateRelationshipMap() async {
     try {
+      print("[ContactController] 🗺️ Building relationship map");
       state.relationshipStatus.clear();
       Map<String, Map<String, dynamic>> relationships = {};
 
@@ -111,6 +171,8 @@ class ContactController extends GetxController {
           .collection("contacts")
           .where("user_token", isEqualTo: token)
           .get();
+
+      print("[ContactController] 📤 Found ${myContacts.docs.length} outgoing contacts");
 
       for (var doc in myContacts.docs) {
         var data = doc.data();
@@ -129,6 +191,8 @@ class ContactController extends GetxController {
           .where("contact_token", isEqualTo: token)
           .get();
 
+      print("[ContactController] 📥 Found ${theirContacts.docs.length} incoming contacts");
+
       for (var doc in theirContacts.docs) {
         var data = doc.data();
         String userToken = data['user_token'];
@@ -141,51 +205,40 @@ class ContactController extends GetxController {
         relationships[userToken]!['incoming_doc_id'] = doc.id;
       }
 
-      // Now analyze relationships and set proper status
+      // Analyze relationships and set proper status
       for (var entry in relationships.entries) {
         String userToken = entry.key;
         String? outgoing = entry.value['outgoing'];
         String? incoming = entry.value['incoming'];
 
-        // Case 1: Both sent requests (mutual pending) - SPECIAL CASE!
         if (outgoing == 'pending' && incoming == 'pending') {
           state.relationshipStatus[userToken] = 'pending_mutual';
-
-          // Auto-accept both since it's mutual!
-          _autoAcceptMutualRequest(
-              entry.value['doc_id'], entry.value['incoming_doc_id']);
-        }
-        // Case 2: Accepted in either direction
-        else if (outgoing == 'accepted' || incoming == 'accepted') {
+          _autoAcceptMutualRequest(entry.value['doc_id'], entry.value['incoming_doc_id']);
+        } else if (outgoing == 'accepted' || incoming == 'accepted') {
           state.relationshipStatus[userToken] = 'accepted';
-        }
-        // Case 3: I sent pending
-        else if (outgoing == 'pending') {
+        } else if (outgoing == 'pending') {
           state.relationshipStatus[userToken] = 'pending_sent';
-        }
-        // Case 4: They sent pending
-        else if (incoming == 'pending') {
+        } else if (incoming == 'pending') {
           state.relationshipStatus[userToken] = 'pending_received';
-        }
-        // Case 5: I blocked them
-        else if (outgoing == 'blocked') {
+        } else if (outgoing == 'blocked') {
           state.relationshipStatus[userToken] = 'blocked';
-        }
-        // Case 6: They blocked me
-        else if (incoming == 'blocked') {
+        } else if (incoming == 'blocked') {
           state.relationshipStatus[userToken] = 'blocked_by';
         }
       }
-    } catch (e) {
-      print("[ContactController] Error updating relationship map: $e");
+
+      print("[ContactController] ✅ Relationship map updated: ${state.relationshipStatus.length} relationships");
+    } catch (e, stackTrace) {
+      print("[ContactController] ❌ Error updating relationship map: $e");
+      print("[ContactController] Stack: $stackTrace");
     }
   }
 
-  /// Auto-accept mutual pending requests (both users added each other)
-  Future<void> _autoAcceptMutualRequest(
-      String myDocId, String theirDocId) async {
+  /// Auto-accept mutual pending requests
+  Future<void> _autoAcceptMutualRequest(String myDocId, String theirDocId) async {
     try {
-      // Accept both documents
+      print("[ContactController] 🤝 Auto-accepting mutual request");
+
       await Future.wait([
         db.collection("contacts").doc(myDocId).update({
           "status": "accepted",
@@ -199,18 +252,17 @@ class ContactController extends GetxController {
 
       toastInfo(msg: "🎉 You both added each other! Auto-accepted!");
 
-      // Refresh all lists
       await Future.wait([
-        loadAcceptedContacts(),
+        loadAcceptedContacts(refresh: true),
         loadPendingRequests(),
         loadSentRequests(),
       ]);
     } catch (e) {
-      print("[ContactController] Error auto-accepting mutual request: $e");
+      print("[ContactController] ❌ Error auto-accepting mutual request: $e");
     }
   }
 
-  /// Get relationship status for a user (for UI)
+  /// Get relationship status for a user
   String? getRelationshipStatus(String? userToken) {
     if (userToken == null) return null;
     return state.relationshipStatus[userToken];
@@ -232,7 +284,7 @@ class ContactController extends GetxController {
         return {
           'text': '⏳ Pending',
           'color': Colors.orange,
-          'enabled': true, // Allow cancel
+          'enabled': true,
           'icon': Icons.hourglass_empty,
         };
       case 'pending_received':
@@ -273,25 +325,13 @@ class ContactController extends GetxController {
     }
   }
 
-  // =============== NEW PROFESSIONAL CONTACT MANAGEMENT ===============
-
-  /// Load accepted contacts only
-  // ========== INDUSTRIAL-LEVEL CONTACT LOADING WITH PAGINATION ==========
-
-  /// Load accepted contacts with pagination and caching
-  /// [refresh] = true: Clear existing data and reload from scratch
-  /// [loadMore] = true: Load next page (pagination)
-  Future<void> loadAcceptedContacts({
-    bool refresh = false,
-    bool loadMore = false,
-  }) async {
-    // Prevent duplicate loading
+  /// Load accepted contacts - SIMPLIFIED VERSION
+  Future<void> loadAcceptedContacts({bool refresh = false, bool loadMore = false}) async {
     if (state.isLoadingContacts.value) {
-      print("[ContactController] ⏸️ Already loading contacts, skipping...");
+      print("[ContactController] ⏸️ Already loading contacts");
       return;
     }
 
-    // If no more data, don't load
     if (loadMore && !state.hasMoreContacts.value) {
       print("[ContactController] 📭 No more contacts to load");
       return;
@@ -299,243 +339,142 @@ class ContactController extends GetxController {
 
     try {
       state.isLoadingContacts.value = true;
+      
       if (refresh) {
+        print("[ContactController] 🔄 REFRESH: Clearing and reloading");
         state.acceptedContacts.clear();
         state.lastContactDoc = null;
         state.hasMoreContacts.value = true;
       }
 
-      // Strategy: Query contacts collection, then batch-fetch user profiles
-      // This is more efficient than individual queries per contact
+      print("[ContactController] 📥 Loading accepted contacts for token: $token");
 
-      // Step 1: Get contact relationships (with pagination)
-      List<Map<String, dynamic>> contactRelationships = [];
+      // Step 1: Get contact relationships
+      Set<String> contactTokens = {};
+      DocumentSnapshot? lastDoc;
 
-      // Query where I accepted someone
-      // NOTE: Removed orderBy to avoid index issues - can add back later with Firestore index
-      Query<Map<String, dynamic>> myContactsQuery = db
+      // Query outgoing accepted contacts (simpler query without compound index)
+      var myContactsQuery = await db
           .collection("contacts")
           .where("user_token", isEqualTo: token)
           .where("status", isEqualTo: "accepted")
-          .limit(ContactState.CONTACTS_PAGE_SIZE);
+          .limit(50) // Load more at once for better UX
+          .get();
 
-      if (state.lastContactDoc != null && loadMore) {
-        myContactsQuery =
-            myContactsQuery.startAfterDocument(state.lastContactDoc!);
+      print("[ContactController] 📤 Found ${myContactsQuery.docs.length} outgoing accepted");
+
+      for (var doc in myContactsQuery.docs) {
+        var data = doc.data();
+        String? contactToken = data['contact_token'];
+        if (contactToken != null && contactToken.isNotEmpty) {
+          contactTokens.add(contactToken);
+          lastDoc = doc;
+        }
       }
 
-      var myContacts = await myContactsQuery.get();
-
-      // Query where someone accepted me
-      // NOTE: Removed orderBy to avoid index issues - can add back later with Firestore index
-      Query<Map<String, dynamic>> theirContactsQuery = db
+      // Query incoming accepted contacts (simpler query without compound index)
+      var theirContactsQuery = await db
           .collection("contacts")
           .where("contact_token", isEqualTo: token)
           .where("status", isEqualTo: "accepted")
-          .limit(ContactState.CONTACTS_PAGE_SIZE);
+          .limit(50)
+          .get();
 
-      if (state.lastContactDoc != null && loadMore) {
-        theirContactsQuery =
-            theirContactsQuery.startAfterDocument(state.lastContactDoc!);
-      }
+      print("[ContactController] 📥 Found ${theirContactsQuery.docs.length} incoming accepted");
 
-      var theirContacts = await theirContactsQuery.get();
-
-      // Step 2: Merge and deduplicate contact tokens
-      Set<String> uniqueTokens = {};
-      Set<String> tokensToFetch = {};
-
-      // Process outgoing contacts
-      for (var doc in myContacts.docs) {
+      for (var doc in theirContactsQuery.docs) {
         var data = doc.data();
-        String contactToken = data['contact_token'] ?? '';
-
-        if (contactToken.isEmpty || uniqueTokens.contains(contactToken)) {
-          continue;
-        }
-
-        uniqueTokens.add(contactToken);
-        tokensToFetch.add(contactToken);
-
-        contactRelationships.add({
-          'contact_token': contactToken,
-          'doc_id': doc.id,
-          'accepted_at': data['accepted_at'],
-          // ✅ STORE CONTACT DATA FROM CONTACTS DOC (for fallback)
-          'contact_name': data['contact_name'],
-          'contact_avatar': data['contact_avatar'],
-          'contact_online': data['contact_online'],
-        });
-
-        state.lastContactDoc = doc;
-      }
-
-      // Process incoming contacts
-      for (var doc in theirContacts.docs) {
-        var data = doc.data();
-        String contactToken = data['user_token'] ?? '';
-
-        if (contactToken.isEmpty || uniqueTokens.contains(contactToken)) {
-          continue;
-        }
-
-        uniqueTokens.add(contactToken);
-        tokensToFetch.add(contactToken);
-
-        contactRelationships.add({
-          'contact_token': contactToken,
-          'doc_id': doc.id,
-          'accepted_at': data['accepted_at'],
-          // ✅ STORE USER DATA FROM CONTACTS DOC (for fallback)
-          'user_name': data['user_name'],
-          'user_avatar': data['user_avatar'],
-          'user_online': data['user_online'],
-        });
-
-        state.lastContactDoc = doc;
-      }
-
-      // Step 3: Batch fetch user profiles (EFFICIENT!)
-      if (tokensToFetch.isNotEmpty) {
-        print(
-            "[ContactController] 🔍 Batch fetching ${tokensToFetch.length} user profiles...");
-        print(
-            "[ContactController] 🔍 Tokens to fetch: ${tokensToFetch.toList().take(5)}...");
-
-        // Firestore 'in' query limit is 10, so batch in chunks
-        List<String> tokensList = tokensToFetch.toList();
-        for (int i = 0; i < tokensList.length; i += 10) {
-          int end = (i + 10 < tokensList.length) ? i + 10 : tokensList.length;
-          List<String> batch = tokensList.sublist(i, end);
-
-          print(
-              "[ContactController] 🔍 Fetching batch ${(i ~/ 10) + 1}: ${batch.length} tokens");
-
-          var profilesQuery = await db
-              .collection("user_profiles")
-              .where(FieldPath.documentId, whereIn: batch)
-              .get();
-
-          // Cache profiles
-          for (var profileDoc in profilesQuery.docs) {
-            var profileData = profileDoc.data();
-            var profile = UserProfile(
-              token: profileDoc.id,
-              name: profileData['name'],
-              avatar: profileData['avatar'],
-              email: profileData['email'],
-              online: profileData['online'] ?? 0,
-              search_name: profileData['search_name'],
-            );
-            state.profileCache[profileDoc.id] = profile;
-          }
-
-          // 🔧 FALLBACK: For tokens not found, try querying by 'token' field
-          // (This handles old users who have doc ID = access_token instead of permanent token)
-          Set<String> foundTokens = profilesQuery.docs.map((d) => d.id).toSet();
-          Set<String> missingTokens = batch.toSet().difference(foundTokens);
-
-          if (missingTokens.isNotEmpty) {
-            for (var missingToken in missingTokens) {
-              try {
-                var fallbackQuery = await db
-                    .collection("user_profiles")
-                    .where("token", isEqualTo: missingToken)
-                    .limit(1)
-                    .get();
-
-                if (fallbackQuery.docs.isNotEmpty) {
-                  var profileDoc = fallbackQuery.docs.first;
-                  var profileData = profileDoc.data();
-                  var profile = UserProfile(
-                    token:
-                        missingToken, // Use the token from contacts, not doc ID!
-                    name: profileData['name'],
-                    avatar: profileData['avatar'],
-                    email: profileData['email'],
-                    online: profileData['online'] ?? 0,
-                    search_name: profileData['search_name'],
-                  );
-                  state.profileCache[missingToken] = profile;
-                }
-              } catch (e) {
-                print(
-                    "[ContactController] ❌ Fallback failed for $missingToken: $e");
-              }
-            }
-          }
+        String? userToken = data['user_token'];
+        if (userToken != null && userToken.isNotEmpty) {
+          contactTokens.add(userToken);
+          lastDoc = doc;
         }
       }
 
-      // Step 4: Build ContactEntity list from relationships + cached profiles
-      for (var relationship in contactRelationships) {
-        String contactToken = relationship['contact_token'];
+      print("[ContactController] 👥 Total unique contact tokens: ${contactTokens.length}");
+
+      if (contactTokens.isEmpty) {
+        print("[ContactController] ⚠️ No contacts found!");
+        state.hasMoreContacts.value = false;
+        return;
+      }
+
+      // Step 2: Batch fetch user profiles
+      List<String> tokensList = contactTokens.toList();
+      for (int i = 0; i < tokensList.length; i += 10) {
+        int end = (i + 10 < tokensList.length) ? i + 10 : tokensList.length;
+        List<String> batch = tokensList.sublist(i, end);
+
+        print("[ContactController] 🔍 Fetching batch ${(i ~/ 10) + 1}: ${batch.length} profiles");
+
+        var profilesQuery = await db
+            .collection("user_profiles")
+            .where(FieldPath.documentId, whereIn: batch)
+            .get();
+
+        print("[ContactController] 📦 Got ${profilesQuery.docs.length} profiles from batch");
+
+        for (var profileDoc in profilesQuery.docs) {
+          var profileData = profileDoc.data();
+          var profile = UserProfile(
+            token: profileDoc.id,
+            name: profileData['name'],
+            avatar: profileData['avatar'],
+            email: profileData['email'],
+            online: profileData['online'] ?? 0,
+            search_name: profileData['search_name'],
+          );
+          state.profileCache[profileDoc.id] = profile;
+        }
+      }
+
+      print("[ContactController] 💾 Cached ${state.profileCache.length} profiles");
+
+      // Step 3: Build ContactEntity list
+      for (String contactToken in contactTokens) {
         UserProfile? profile = state.profileCache[contactToken];
 
-        // ✅ FALLBACK: If profile not found in user_profiles, use data from contacts doc
-        String contactName;
-        String contactAvatar;
-        int contactOnline;
-
         if (profile == null) {
-          // Use data stored in the contacts document itself
-          // Check both user_* (incoming) and contact_* (outgoing) fields
-          contactName = relationship['user_name'] ??
-              relationship['contact_name'] ??
-              'Unknown';
-          contactAvatar = relationship['user_avatar'] ??
-              relationship['contact_avatar'] ??
-              '';
-          contactOnline = relationship['user_online'] ??
-              relationship['contact_online'] ??
-              0;
-        } else {
-          contactName = profile.name ?? 'Unknown';
-          contactAvatar = profile.avatar ?? '';
-          contactOnline = profile.online ?? 0;
+          print("[ContactController] ⚠️ Profile not found for $contactToken");
+          continue;
         }
 
         var contact = ContactEntity(
-          id: relationship['doc_id'],
+          id: "", // We don't need doc ID for display
           user_token: token,
           contact_token: contactToken,
-          contact_name: contactName,
-          contact_avatar: contactAvatar,
-          contact_online: contactOnline,
+          contact_name: profile.name,
+          contact_avatar: profile.avatar,
+          contact_online: profile.online ?? 0,
           status: 'accepted',
-          accepted_at: relationship['accepted_at'],
         );
 
         state.acceptedContacts.add(contact);
       }
 
-      // Step 5: Update pagination state
-      bool hasMore = (myContacts.docs.length + theirContacts.docs.length) >=
-          ContactState.CONTACTS_PAGE_SIZE;
-      state.hasMoreContacts.value = hasMore;
+      state.lastContactDoc = lastDoc;
+      state.hasMoreContacts.value = false; // Disable pagination for simplicity
 
-      print(
-          "[ContactController] ✅ Loaded ${contactRelationships.length} unique contacts | Total: ${state.acceptedContacts.length} | Has more: $hasMore");
-
-      // ✅ Force UI update
+      print("[ContactController] ✅ Loaded ${state.acceptedContacts.length} contacts successfully");
+      
+      // Force UI update
       state.acceptedContacts.refresh();
-      print("[ContactController] ✅ Accepted contacts UI refreshed!");
+
     } catch (e, stackTrace) {
       print("[ContactController] ❌ Error loading contacts: $e");
-      print("[ContactController] Stack trace: $stackTrace");
-      toastInfo(msg: "Failed to load contacts");
+      print("[ContactController] Stack: $stackTrace");
+      toastInfo(msg: "Failed to load contacts: ${e.toString()}");
     } finally {
       state.isLoadingContacts.value = false;
     }
   }
 
-  /// Load pending contact requests received
+  /// Load pending contact requests received - FIXED
   Future<void> loadPendingRequests() async {
     try {
       print("========================================");
-      print("[ContactController] � LOADING PENDING REQUESTS");
+      print("[ContactController] 📬 LOADING PENDING REQUESTS");
       print("[ContactController] 📥 My token: '$token'");
-      print("[ContactController] 📥 Querying Firestore...");
 
       var requests = await db
           .collection("contacts")
@@ -543,28 +482,13 @@ class ContactController extends GetxController {
           .where("status", isEqualTo: "pending")
           .get();
 
-      print(
-          "[ContactController] 📬 Query returned ${requests.docs.length} documents");
-
-      // Debug: Show ALL contacts to see what's in Firestore
-      var allMyIncoming = await db
-          .collection("contacts")
-          .where("contact_token", isEqualTo: token)
-          .get();
-      print(
-          "[ContactController] � ALL incoming contacts (any status): ${allMyIncoming.docs.length}");
-      for (var doc in allMyIncoming.docs) {
-        var data = doc.data();
-        print(
-            "   📧 From: ${data['user_name']} (${data['user_token']}), Status: ${data['status']}");
-      }
+      print("[ContactController] 📬 Query returned ${requests.docs.length} pending requests");
 
       state.pendingRequests.clear();
 
       for (var doc in requests.docs) {
         var data = doc.data();
-        print(
-            "[ContactController] 📬 Request from: ${data['user_name']} (${data['user_token']})");
+        print("[ContactController] 📬 Request from: ${data['user_name']} (${data['user_token']})");
 
         var contact = ContactEntity(
           id: doc.id,
@@ -582,24 +506,22 @@ class ContactController extends GetxController {
       }
 
       state.pendingRequestCount.value = state.pendingRequests.length;
-      print(
-          "[ContactController] 📬 Badge count updated to: ${state.pendingRequestCount.value}");
-
-      // ✅ Force UI update
+      print("[ContactController] 📬 Badge count updated to: ${state.pendingRequestCount.value}");
+      
+      // Force UI update
       state.pendingRequests.refresh();
       state.pendingRequestCount.refresh();
 
-      print("[ContactController] ✅ Pending requests loaded and UI refreshed!");
-    } catch (e) {
+    } catch (e, stackTrace) {
       print("[ContactController] ❌ Error loading requests: $e");
-      print("[ContactController] ❌ Error details: ${e.toString()}");
+      print("[ContactController] Stack: $stackTrace");
     }
   }
 
-  /// Load sent contact requests (outgoing pending)
+  /// Load sent contact requests
   Future<void> loadSentRequests() async {
     try {
-      print("[ContactController] Loading sent requests");
+      print("[ContactController] 📤 Loading sent requests");
 
       var requests = await db
           .collection("contacts")
@@ -625,16 +547,16 @@ class ContactController extends GetxController {
         state.sentRequests.add(contact);
       }
 
-      print("[ContactController] Sent requests: ${state.sentRequests.length}");
+      print("[ContactController] 📤 Sent requests: ${state.sentRequests.length}");
     } catch (e) {
-      print("[ContactController] Error loading sent requests: $e");
+      print("[ContactController] ❌ Error loading sent requests: $e");
     }
   }
 
   /// Load blocked users
   Future<void> loadBlockedUsers() async {
     try {
-      print("[ContactController] Loading blocked users");
+      print("[ContactController] 🚫 Loading blocked users");
 
       var blocked = await db
           .collection("contacts")
@@ -657,12 +579,14 @@ class ContactController extends GetxController {
         );
         state.blockedList.add(contact);
       }
+
+      print("[ContactController] 🚫 Blocked users: ${state.blockedList.length}");
     } catch (e) {
-      print("[ContactController] Error loading blocked users: $e");
+      print("[ContactController] ❌ Error loading blocked users: $e");
     }
   }
 
-  /// Search users by name or email (smart search with multiple strategies)
+  /// Search users by name or email
   Future<void> searchUsers(String query) async {
     if (query.isEmpty) {
       state.searchResults.clear();
@@ -671,38 +595,37 @@ class ContactController extends GetxController {
     }
 
     try {
-      print("[ContactController] Searching for: $query");
+      print("[ContactController] 🔍 Searching for: $query");
       state.isSearching.value = true;
       String searchLower = query.toLowerCase().trim();
 
-      // Get all existing ACCEPTED contacts to filter them out from search
-      // We KEEP pending/blocked in search so users can see button states
+      // Get accepted contacts to filter them out
       Set<String> acceptedContactTokens = {};
 
-      // Get accepted contacts where I'm the user
       var myAccepted = await db
           .collection("contacts")
           .where("user_token", isEqualTo: token)
           .where("status", isEqualTo: "accepted")
           .get();
+      
       for (var doc in myAccepted.docs) {
         acceptedContactTokens.add(doc.data()['contact_token']);
       }
 
-      // Get accepted contacts where I'm the contact
       var theirAccepted = await db
           .collection("contacts")
           .where("contact_token", isEqualTo: token)
           .where("status", isEqualTo: "accepted")
           .get();
+      
       for (var doc in theirAccepted.docs) {
         acceptedContactTokens.add(doc.data()['user_token']);
       }
 
-      // Get all user profiles (we'll filter client-side for better matching)
+      // Get all user profiles
       var allUsers = await db
           .collection("user_profiles")
-          .limit(100) // Get more results for better client-side filtering
+          .limit(100)
           .get();
 
       state.searchResults.clear();
@@ -711,20 +634,16 @@ class ContactController extends GetxController {
       for (var doc in allUsers.docs) {
         var data = doc.data();
 
-        // Skip current user
         if (data['token'] == token) continue;
-
-        // Only skip users who are ACCEPTED friends (show pending/blocked with buttons)
         if (acceptedContactTokens.contains(data['token'])) continue;
+
         String name = (data['name'] ?? '').toLowerCase();
         String searchName = (data['search_name'] ?? '').toLowerCase();
 
-        // Search only by name (not email)
         bool matchesName = name.contains(searchLower);
         bool matchesSearchName = searchName.startsWith(searchLower);
 
         if (matchesName || matchesSearchName) {
-          // Convert online field from bool to int if needed
           int? onlineValue;
           if (data['online'] is bool) {
             onlineValue = data['online'] ? 1 : 0;
@@ -740,14 +659,12 @@ class ContactController extends GetxController {
             online: onlineValue,
           );
 
-          // Store for sorting
           tempResults.add(user);
         }
       }
 
-      // Sort by relevance (you can enhance this with the match score)
+      // Sort by relevance
       tempResults.sort((a, b) {
-        // Prioritize exact matches first
         String aName = (a.name ?? '').toLowerCase();
         String bName = (b.name ?? '').toLowerCase();
 
@@ -757,30 +674,27 @@ class ContactController extends GetxController {
         if (aExact && !bExact) return -1;
         if (!aExact && bExact) return 1;
 
-        // Then sort by name starts with query
         bool aStarts = aName.startsWith(searchLower);
         bool bStarts = bName.startsWith(searchLower);
 
         if (aStarts && !bStarts) return -1;
         if (!aStarts && bStarts) return 1;
 
-        // Finally alphabetical
         return aName.compareTo(bName);
       });
 
-      // Limit results to top 20
       state.searchResults.addAll(tempResults.take(20));
       state.isSearching.value = false;
 
-      print("[ContactController] Found ${state.searchResults.length} users");
+      print("[ContactController] 🔍 Found ${state.searchResults.length} users");
     } catch (e) {
-      print("[ContactController] Error searching users: $e");
+      print("[ContactController] ❌ Error searching users: $e");
       state.isSearching.value = false;
       toastInfo(msg: "Search failed: ${e.toString()}");
     }
   }
 
-  /// Send contact request with industrial-level error handling
+  /// Send contact request
   Future<bool> sendContactRequest(UserProfile user) async {
     if (user.token == null || user.token!.isEmpty) {
       toastInfo(msg: "Invalid user");
@@ -790,10 +704,9 @@ class ContactController extends GetxController {
     try {
       EasyLoading.show(status: 'Sending request...');
 
-      // Immediately update UI optimistically
       state.relationshipStatus[user.token!] = 'pending_sent';
 
-      // Check if contact already exists (I added them)
+      // Check if contact already exists
       var existingOutgoing = await db
           .collection("contacts")
           .where("user_token", isEqualTo: token)
@@ -811,13 +724,12 @@ class ContactController extends GetxController {
           toastInfo(msg: "⏳ Request already sent");
           state.relationshipStatus[user.token!] = 'pending_sent';
         } else if (status == 'blocked') {
-          toastInfo(msg: "🚫 You have blocked this user. Unblock to add.");
+          toastInfo(msg: "🚫 You have blocked this user");
           state.relationshipStatus[user.token!] = 'blocked';
         }
         return false;
       }
 
-      // Check if contact already exists (they added me)
       var existingIncoming = await db
           .collection("contacts")
           .where("user_token", isEqualTo: user.token)
@@ -832,10 +744,8 @@ class ContactController extends GetxController {
           toastInfo(msg: "✓ Already in your contacts");
           state.relationshipStatus[user.token!] = 'accepted';
         } else if (status == 'pending') {
-          toastInfo(
-              msg: "📬 This user sent you a request! Check 'Requests' tab");
+          toastInfo(msg: "📬 This user sent you a request! Check 'Requests' tab");
           state.relationshipStatus[user.token!] = 'pending_received';
-          // Switch to requests tab
           state.selectedTab.value = 1;
         } else if (status == 'blocked') {
           toastInfo(msg: "🚫 This user has blocked you");
@@ -846,12 +756,6 @@ class ContactController extends GetxController {
 
       // Send the request
       var myProfile = UserStore.to.profile;
-
-      print("========================================");
-      print("[ContactController] 📤 SENDING CONTACT REQUEST");
-      print("[ContactController] 📤 From: ${myProfile.name} (token: '$token')");
-      print("[ContactController] 📤 To: ${user.name} (token: '${user.token}')");
-      print("[ContactController] 📤 Writing to Firestore...");
 
       var contactData = {
         "user_token": token,
@@ -867,32 +771,23 @@ class ContactController extends GetxController {
         "requested_at": Timestamp.now(),
       };
 
-      print("[ContactController] 📤 Data: $contactData");
-
-      var docRef = await db.collection("contacts").add(contactData);
-
-      print(
-          "[ContactController] ✅ Request saved to Firestore! Doc ID: ${docRef.id}");
-      print(
-          "[ContactController] 📤 Receiver should see: contact_token='${user.token}', status='pending'");
+      await db.collection("contacts").add(contactData);
 
       EasyLoading.dismiss();
       toastInfo(msg: "✓ Request sent to ${user.name}!");
       state.relationshipStatus[user.token!] = 'pending_sent';
 
-      // Refresh sent requests list
       await loadSentRequests();
 
       return true;
     } catch (e) {
       EasyLoading.dismiss();
-      print("[ContactController] Error sending request: $e");
+      print("[ContactController] ❌ Error sending request: $e");
 
-      // Revert optimistic update on error
       state.relationshipStatus.remove(user.token!);
 
       if (e.toString().contains('PERMISSION_DENIED')) {
-        toastInfo(msg: "❌ Permission denied. Please check Firestore rules.");
+        toastInfo(msg: "❌ Permission denied. Check Firestore rules.");
       } else if (e.toString().contains('network')) {
         toastInfo(msg: "❌ Network error. Check your connection.");
       } else {
@@ -902,7 +797,7 @@ class ContactController extends GetxController {
     }
   }
 
-  /// Accept contact request with industrial-level handling
+  /// Accept contact request
   Future<bool> acceptContactRequest(ContactEntity contact) async {
     if (contact.id == null || contact.user_token == null) {
       toastInfo(msg: "Invalid contact data");
@@ -912,7 +807,6 @@ class ContactController extends GetxController {
     try {
       EasyLoading.show(status: 'Accepting...');
 
-      // Optimistically update UI
       state.relationshipStatus[contact.user_token!] = 'accepted';
 
       await db.collection("contacts").doc(contact.id).update({
@@ -923,19 +817,17 @@ class ContactController extends GetxController {
       EasyLoading.dismiss();
       toastInfo(msg: "✓ ${contact.user_name} is now your contact!");
 
-      // Update lists
       await Future.wait([
         loadPendingRequests(),
-        loadAcceptedContacts(),
+        loadAcceptedContacts(refresh: true),
         _updateRelationshipMap(),
       ]);
 
       return true;
     } catch (e) {
       EasyLoading.dismiss();
-      print("[ContactController] Error accepting request: $e");
+      print("[ContactController] ❌ Error accepting request: $e");
 
-      // Revert optimistic update
       state.relationshipStatus[contact.user_token!] = 'pending_received';
 
       if (e.toString().contains('PERMISSION_DENIED')) {
@@ -950,7 +842,7 @@ class ContactController extends GetxController {
     }
   }
 
-  /// Reject contact request with confirmation
+  /// Reject contact request
   Future<bool> rejectContactRequest(ContactEntity contact) async {
     if (contact.id == null) {
       toastInfo(msg: "Invalid contact data");
@@ -965,7 +857,6 @@ class ContactController extends GetxController {
       EasyLoading.dismiss();
       toastInfo(msg: "✓ Request from ${contact.user_name} rejected");
 
-      // Remove from relationship map
       if (contact.user_token != null) {
         state.relationshipStatus.remove(contact.user_token!);
       }
@@ -976,7 +867,7 @@ class ContactController extends GetxController {
       return true;
     } catch (e) {
       EasyLoading.dismiss();
-      print("[ContactController] Error rejecting request: $e");
+      print("[ContactController] ❌ Error rejecting request: $e");
 
       if (e.toString().contains('not-found')) {
         toastInfo(msg: "Request already removed");
@@ -993,7 +884,6 @@ class ContactController extends GetxController {
     try {
       EasyLoading.show(status: 'Cancelling...');
 
-      // Find the sent request
       var sentRequest = await db
           .collection("contacts")
           .where("user_token", isEqualTo: token)
@@ -1013,7 +903,6 @@ class ContactController extends GetxController {
       EasyLoading.dismiss();
       toastInfo(msg: "✓ Request cancelled");
 
-      // Remove from relationship map
       state.relationshipStatus.remove(userToken);
 
       await loadSentRequests();
@@ -1022,15 +911,14 @@ class ContactController extends GetxController {
       return true;
     } catch (e) {
       EasyLoading.dismiss();
-      print("[ContactController] Error cancelling request: $e");
+      print("[ContactController] ❌ Error cancelling request: $e");
       toastInfo(msg: "❌ Failed to cancel. Try again.");
       return false;
     }
   }
 
   /// Block user
-  Future<void> blockUser(
-      String contactToken, String contactName, String contactAvatar) async {
+  Future<void> blockUser(String contactToken, String contactName, String contactAvatar) async {
     try {
       var existingQuery = await db
           .collection("contacts")
@@ -1039,10 +927,7 @@ class ContactController extends GetxController {
           .get();
 
       if (existingQuery.docs.isNotEmpty) {
-        await db
-            .collection("contacts")
-            .doc(existingQuery.docs.first.id)
-            .update({
+        await db.collection("contacts").doc(existingQuery.docs.first.id).update({
           "status": "blocked",
           "blocked_at": Timestamp.now(),
         });
@@ -1059,9 +944,9 @@ class ContactController extends GetxController {
 
       toastInfo(msg: "$contactName has been blocked");
       await loadBlockedUsers();
-      await loadAcceptedContacts();
+      await loadAcceptedContacts(refresh: true);
     } catch (e) {
-      print("[ContactController] Error blocking user: $e");
+      print("[ContactController] ❌ Error blocking user: $e");
       toastInfo(msg: "Failed to block user");
     }
   }
@@ -1073,7 +958,7 @@ class ContactController extends GetxController {
       toastInfo(msg: "${contact.contact_name} has been unblocked");
       await loadBlockedUsers();
     } catch (e) {
-      print("[ContactController] Error unblocking user: $e");
+      print("[ContactController] ❌ Error unblocking user: $e");
       toastInfo(msg: "Failed to unblock user");
     }
   }
@@ -1118,30 +1003,14 @@ class ContactController extends GetxController {
     }
   }
 
-  /// Listen to contact requests in real-time
-  void _listenToContactRequests() {
-    db
-        .collection("contacts")
-        .where("contact_token", isEqualTo: token)
-        .where("status", isEqualTo: "pending")
-        .snapshots()
-        .listen((snapshot) {
-      state.pendingRequestCount.value = snapshot.docs.length;
-    });
-  }
-
-  // =============== ORIGINAL FUNCTIONALITY ===============
-
-  /// Original goChat - now with contact check
+  /// Navigate to chat (original functionality)
   goChat(ContactItem contactItem) async {
-    // Check if user is blocked
     bool blocked = await isUserBlocked(contactItem.token ?? "");
     if (blocked) {
       toastInfo(msg: "This user is blocked");
       return;
     }
 
-    // Check if user is contact
     bool isContact = await isUserContact(contactItem.token ?? "");
     if (!isContact) {
       toastInfo(msg: "You must be contacts to chat");
@@ -1157,6 +1026,7 @@ class ContactController extends GetxController {
         .where("from_token", isEqualTo: token)
         .where("to_token", isEqualTo: contactItem.token)
         .get();
+        
     var to_messages = await db
         .collection("message")
         .withConverter(
@@ -1168,7 +1038,6 @@ class ContactController extends GetxController {
         .get();
 
     if (from_messages.docs.isEmpty && to_messages.docs.isEmpty) {
-      print("----from_messages--to_messages--empty--");
       var profile = UserStore.to.profile;
       var msgdata = new Msg(
         from_token: profile.token,
@@ -1183,6 +1052,7 @@ class ContactController extends GetxController {
         last_time: Timestamp.now(),
         msg_num: 0,
       );
+      
       var doc_id = await db
           .collection("message")
           .withConverter(
@@ -1190,6 +1060,7 @@ class ContactController extends GetxController {
             toFirestore: (Msg msg, options) => msg.toFirestore(),
           )
           .add(msgdata);
+          
       Get.offAndToNamed("/chat", parameters: {
         "doc_id": doc_id.id,
         "to_token": contactItem.token ?? "",
@@ -1199,8 +1070,6 @@ class ContactController extends GetxController {
       });
     } else {
       if (!from_messages.docs.isEmpty) {
-        print("---from_messages");
-        print(from_messages.docs.first.id);
         Get.offAndToNamed("/chat", parameters: {
           "doc_id": from_messages.docs.first.id,
           "to_token": contactItem.token ?? "",
@@ -1210,8 +1079,6 @@ class ContactController extends GetxController {
         });
       }
       if (!to_messages.docs.isEmpty) {
-        print("---to_messages");
-        print(to_messages.docs.first.id);
         Get.offAndToNamed("/chat", parameters: {
           "doc_id": to_messages.docs.first.id,
           "to_token": contactItem.token ?? "",
@@ -1223,187 +1090,29 @@ class ContactController extends GetxController {
     }
   }
 
-  // 拉取数据
-  asyncLoadAllData() async {
-    EasyLoading.show(
-        indicator: CircularProgressIndicator(),
-        maskType: EasyLoadingMaskType.clear,
-        dismissOnTap: true);
-    state.contactList.clear();
-    var result = await ContactAPI.post_contact();
-    print(result.data!);
-    if (result.code == 0) {
-      state.contactList.addAll(result.data!);
-    }
-    EasyLoading.dismiss();
-  }
-
-  /// 初始
-  /// Debug method: Check Firestore contacts data
-  Future<void> debugCheckFirestoreData() async {
-    print("========================================");
-    print("[ContactController] 🔍 DEBUG: Checking Firestore data");
-    print("[ContactController] 🔍 My token: '$token'");
-
-    try {
-      // ✅ FIRST: Check ALL documents in contacts collection
-      var allContactDocs = await db.collection("contacts").limit(50).get();
-      print(
-          "[ContactController] 📚 TOTAL documents in 'contacts' collection: ${allContactDocs.docs.length}");
-
-      if (allContactDocs.docs.isEmpty) {
-        print(
-            "[ContactController] ⚠️ WARNING: Contacts collection is COMPLETELY EMPTY!");
-        print(
-            "[ContactController] 💡 You need to send a contact request first!");
-      } else {
-        print("[ContactController] 📋 Listing ALL documents:");
-        for (var doc in allContactDocs.docs) {
-          var data = doc.data();
-          print("   📄 Doc ID: ${doc.id}");
-          print("      user_token: '${data['user_token']}'");
-          print("      contact_token: '${data['contact_token']}'");
-          print("      status: '${data['status']}'");
-          print("      user_name: ${data['user_name']}");
-          print("      contact_name: ${data['contact_name']}");
-          print("   ---");
-        }
-      }
-
-      print("");
-      print("[ContactController] 🔎 Now checking for MY token: '$token'");
-
-      // Check contacts where I'm the user
-      var myContactsAll = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: token)
-          .get();
-      print(
-          "[ContactController] 📊 Total contacts where I'm user (user_token=='$token'): ${myContactsAll.docs.length}");
-      for (var doc in myContactsAll.docs) {
-        var data = doc.data();
-        print(
-            "   ✅ Status: ${data['status']}, Contact: ${data['contact_name'] ?? data['contact_token']}");
-      }
-
-      // Check contacts where I'm the contact
-      var theirContactsAll = await db
-          .collection("contacts")
-          .where("contact_token", isEqualTo: token)
-          .get();
-      print(
-          "[ContactController] 📊 Total contacts where I'm contact (contact_token=='$token'): ${theirContactsAll.docs.length}");
-      for (var doc in theirContactsAll.docs) {
-        var data = doc.data();
-        print(
-            "   ✅ Status: ${data['status']}, User: ${data['user_name'] ?? data['user_token']}");
-      }
-
-      // Check my user profile
-      var myProfile = await db.collection("user_profiles").doc(token).get();
-      if (myProfile.exists) {
-        print(
-            "[ContactController] 👤 My profile: ${myProfile.data()?['name']} (online: ${myProfile.data()?['online']})");
-      } else {
-        print("[ContactController] ⚠️ My profile NOT FOUND in user_profiles!");
-      }
-
-      print("========================================");
-    } catch (e, stackTrace) {
-      print("[ContactController] ❌ Debug check failed: $e");
-      print("Stack trace: $stackTrace");
-    }
-  }
-
-  // 🔧 MIGRATION: Update old contacts from old token to new token
-  Future<void> migrateOldContacts(String oldToken, String newToken) async {
-    print("========================================");
-    print("[ContactController] 🔄 MIGRATING CONTACTS");
-    print("[ContactController] 📝 From: '$oldToken'");
-    print("[ContactController] 📝 To:   '$newToken'");
-
-    try {
-      // Find all contacts where I'm the contact (incoming)
-      var incomingContacts = await db
-          .collection("contacts")
-          .where("contact_token", isEqualTo: oldToken)
-          .get();
-
-      print(
-          "[ContactController] 📬 Found ${incomingContacts.docs.length} incoming contacts to migrate");
-
-      for (var doc in incomingContacts.docs) {
-        await doc.reference.update({
-          "contact_token": newToken,
-          "updated_at": FieldValue.serverTimestamp(),
-        });
-        print("   ✅ Updated doc ${doc.id}");
-      }
-
-      // Find all contacts where I'm the user (outgoing)
-      var outgoingContacts = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: oldToken)
-          .get();
-
-      print(
-          "[ContactController] 📤 Found ${outgoingContacts.docs.length} outgoing contacts to migrate");
-
-      for (var doc in outgoingContacts.docs) {
-        await doc.reference.update({
-          "user_token": newToken,
-          "updated_at": FieldValue.serverTimestamp(),
-        });
-        print("   ✅ Updated doc ${doc.id}");
-      }
-
-      print("[ContactController] ✅ Migration complete!");
-      print("========================================");
-    } catch (e, stackTrace) {
-      print("[ContactController] ❌ Migration failed: $e");
-      print("Stack trace: $stackTrace");
-    }
-  }
-
-  @override
-  void onInit() {
-    super.onInit();
-    // ✅ DO NOT setup listeners here - wait until data loads!
-  }
-
-  @override
-  void onReady() {
-    super.onReady();
-    asyncLoadAllData(); // Original API load
-    _initializeContactSystem(); // Initialize contact system
-  }
-
-  /// Initialize contact system with proper sequence to avoid race conditions
-  Future<void> _initializeContactSystem() async {
-    try {
-      // Load all data silently
-      await _updateRelationshipMap();
-      await loadAcceptedContacts(refresh: true);
-      await loadPendingRequests();
-      await loadSentRequests();
-      await loadBlockedUsers();
-      _listenToContactRequests();
-
-      // ✅ Setup listeners AFTER data loads!
-      _setupRealtimeListeners();
-    } catch (e) {
-      print("[ContactController] ❌ Initialization error: $e");
-      toastInfo(msg: "Failed to load contacts. Please restart the app.");
-    }
-  }
-
-  // ========== REFRESH & PAGINATION HELPERS ==========
-
-  /// Refresh contacts (pull-to-refresh)
+  /// Refresh methods for pull-to-refresh
   Future<void> refreshContacts() async {
     state.isRefreshing.value = true;
     try {
       await loadAcceptedContacts(refresh: true);
+    } finally {
+      state.isRefreshing.value = false;
+    }
+  }
+
+  Future<void> refreshRequests() async {
+    state.isRefreshing.value = true;
+    try {
+      await loadPendingRequests();
+    } finally {
+      state.isRefreshing.value = false;
+    }
+  }
+
+  Future<void> refreshBlocked() async {
+    state.isRefreshing.value = true;
+    try {
+      await loadBlockedUsers();
     } finally {
       state.isRefreshing.value = false;
     }
@@ -1416,31 +1125,25 @@ class ContactController extends GetxController {
     }
   }
 
-  /// Refresh requests
-  Future<void> refreshRequests() async {
-    state.isRefreshing.value = true;
-    try {
-      await loadPendingRequests();
-    } finally {
-      state.isRefreshing.value = false;
+  /// Original API load (backward compatibility)
+  asyncLoadAllData() async {
+    EasyLoading.show(
+        indicator: CircularProgressIndicator(),
+        maskType: EasyLoadingMaskType.clear,
+        dismissOnTap: true);
+    state.contactList.clear();
+    var result = await ContactAPI.post_contact();
+    if (result.code == 0) {
+      state.contactList.addAll(result.data!);
     }
-  }
-
-  /// Refresh blocked users
-  Future<void> refreshBlocked() async {
-    state.isRefreshing.value = true;
-    try {
-      await loadBlockedUsers();
-    } finally {
-      state.isRefreshing.value = false;
-    }
+    EasyLoading.dismiss();
   }
 
   @override
   void onClose() {
     contactsListener?.cancel();
     requestsListener?.cancel();
-    state.onlineStatusListener?.cancel();
+    onlineStatusListener?.cancel();
     super.onClose();
   }
 

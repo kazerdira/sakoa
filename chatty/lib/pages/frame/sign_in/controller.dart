@@ -160,7 +160,10 @@ class SignInController extends GetxController {
         // Create/update user profile in Firestore for search functionality
         try {
           var db = FirebaseFirestore.instance;
-          String token = result.data!.access_token!;
+          // ✅ CRITICAL FIX: Use result.data!.token (permanent ID), NOT access_token!
+          // token = permanent Firestore user ID (never changes, used in contacts)
+          // access_token = JWT session token (changes on every login, used for API auth)
+          String token = result.data!.token!;
           String name = result.data!.name ?? '';
           String searchName = name.toLowerCase().trim();
 
