@@ -14,14 +14,22 @@ class PresenceService extends GetxService {
   final _presenceCache = <String, PresenceData>{}.obs;
   final _storage = GetStorage('presence_cache');
 
+  // 🔥 REACTIVE: Map of stale offline users (userToken -> true/false)
+  // Controllers can watch this to update UI when users go offline due to stale heartbeat
+  final staleOfflineUsers = <String, bool>{}.obs;
+
   Timer? _heartbeatTimer;
   Timer? _cleanupTimer;
+  Timer? _presenceCheckTimer;
 
   // Configuration
   static const HEARTBEAT_INTERVAL = Duration(seconds: 30);
-  static const OFFLINE_THRESHOLD = Duration(seconds: 45);
+  static const OFFLINE_THRESHOLD =
+      Duration(seconds: 45); // If no heartbeat for 45s → offline
   static const TYPING_TIMEOUT = Duration(seconds: 3);
   static const CACHE_DURATION = Duration(minutes: 5);
+  static const PRESENCE_CHECK_INTERVAL =
+      Duration(seconds: 15); // Check for stale presence every 15s
 
   String get myToken => UserStore.to.profile.token ?? UserStore.to.token;
 
@@ -30,9 +38,46 @@ class PresenceService extends GetxService {
     await GetStorage.init('presence_cache');
     _startHeartbeat();
     _startCleanupTimer();
+    _startPresenceCheckTimer();
     await setOnline();
     print('[PresenceService] ✅ Initialized with heartbeat system');
     return this;
+  }
+
+  /// 🔥 SMART: Periodically check cached presence for stale heartbeats
+  void _startPresenceCheckTimer() {
+    _presenceCheckTimer?.cancel();
+    _presenceCheckTimer = Timer.periodic(PRESENCE_CHECK_INTERVAL, (_) {
+      _checkStalePresence();
+    });
+    print(
+        '[PresenceService] 👀 Started presence check timer (every ${PRESENCE_CHECK_INTERVAL.inSeconds}s)');
+  }
+
+  /// Check all cached presence and update if heartbeat is stale
+  void _checkStalePresence() {
+    int staleCount = 0;
+    final staleTokens = <String>[];
+
+    _presenceCache.forEach((token, presence) {
+      // If Firestore says online but heartbeat is stale → Mark as offline locally
+      if (presence.isOnline && !isUserActuallyOnline(presence)) {
+        _presenceCache[token] = presence.copyWith(online: 0);
+        staleOfflineUsers[token] = true; // 🔥 Mark as stale offline
+        staleTokens.add(token);
+        staleCount++;
+      } else if (!presence.isOnline && staleOfflineUsers.containsKey(token)) {
+        // User came back online, remove from stale list
+        staleOfflineUsers.remove(token);
+      }
+    });
+
+    if (staleCount > 0) {
+      print(
+          '[PresenceService] 🔍 Detected $staleCount stale presence (marked offline locally): $staleTokens');
+      _presenceCache.refresh(); // Trigger cache update
+      staleOfflineUsers.refresh(); // 🔥 Trigger reactive update for UI
+    }
   }
 
   // ============ ONLINE/OFFLINE STATUS ============
@@ -156,7 +201,42 @@ class PresenceService extends GetxService {
     }
   }
 
+  /// 🔥 SMART: Check if user should be considered offline based on last heartbeat
+  /// This handles cases where user lost network (WiFi/data) and couldn't update status
+  bool isUserActuallyOnline(PresenceData presence) {
+    // If Firestore says offline, trust it
+    if (!presence.isOnline) return false;
+
+    // If no last_heartbeat timestamp, assume offline
+    if (presence.lastHeartbeat == null) return false;
+
+    // Check if last heartbeat is recent (within OFFLINE_THRESHOLD)
+    final lastHeartbeatTime = presence.lastHeartbeat!.toDate();
+    final timeSinceHeartbeat = DateTime.now().difference(lastHeartbeatTime);
+
+    // If heartbeat is older than threshold → User lost connection → Show as offline
+    if (timeSinceHeartbeat > OFFLINE_THRESHOLD) {
+      // print('[PresenceService] 🔍 User ${presence.userToken} heartbeat is stale (${timeSinceHeartbeat.inSeconds}s ago) → Offline');
+      return false;
+    }
+
+    return true;
+  }
+
+  /// 🔥 SMART: Get "real" online status considering heartbeat timeout
+  Future<PresenceData> getPresenceWithTimeoutDetection(String userToken) async {
+    final presence = await getPresence(userToken);
+
+    // If Firestore says online but heartbeat is stale → Override to offline
+    if (presence.isOnline && !isUserActuallyOnline(presence)) {
+      return presence.copyWith(online: 0);
+    }
+
+    return presence;
+  }
+
   /// Listen to presence changes for a user (real-time)
+  /// 🔥 SMART: Applies timeout detection to show offline if heartbeat is stale
   Stream<PresenceData> watchPresence(String userToken) {
     if (userToken.isEmpty) {
       return Stream.value(PresenceData.offline());
@@ -170,13 +250,18 @@ class PresenceService extends GetxService {
       if (!doc.exists) return PresenceData.offline();
 
       final data = doc.data()!;
-      final presence = PresenceData(
+      var presence = PresenceData(
         userToken: userToken,
         online: _normalizeOnlineStatus(data['online']),
         lastSeen: data['last_seen'] as Timestamp?,
         lastHeartbeat: data['last_heartbeat'] as Timestamp?,
         fetchedAt: DateTime.now(),
       );
+
+      // 🔥 SMART: Apply timeout detection - if heartbeat is stale, show as offline
+      if (presence.isOnline && !isUserActuallyOnline(presence)) {
+        presence = presence.copyWith(online: 0);
+      }
 
       // Update cache
       _presenceCache[userToken] = presence;
@@ -343,6 +428,7 @@ class PresenceService extends GetxService {
     print('[PresenceService] 🛑 Cleaning up...');
     _heartbeatTimer?.cancel();
     _cleanupTimer?.cancel();
+    _presenceCheckTimer?.cancel();
     // Note: setOffline() should be called manually before disposal
     // via stopHeartbeat() in logout flow
     super.onClose();
@@ -369,6 +455,23 @@ class PresenceData {
   bool get isOnline => online == 1;
   bool get isExpired =>
       DateTime.now().difference(fetchedAt) > PresenceService.CACHE_DURATION;
+
+  /// Create a copy with modified fields
+  PresenceData copyWith({
+    String? userToken,
+    int? online,
+    Timestamp? lastSeen,
+    Timestamp? lastHeartbeat,
+    DateTime? fetchedAt,
+  }) {
+    return PresenceData(
+      userToken: userToken ?? this.userToken,
+      online: online ?? this.online,
+      lastSeen: lastSeen ?? this.lastSeen,
+      lastHeartbeat: lastHeartbeat ?? this.lastHeartbeat,
+      fetchedAt: fetchedAt ?? this.fetchedAt,
+    );
+  }
 
   String get lastSeenText {
     if (isOnline) return 'Online';

@@ -352,6 +352,30 @@ class MessageController extends GetxController with WidgetsBindingObserver {
 
     getProfile();
     _snapshots();
+
+    // 🔥 NEW: Listen to stale offline detection
+    _setupStaleOfflineListener();
+  }
+
+  /// 🔥 SMART: Listen to stale offline users (timeout detection)
+  void _setupStaleOfflineListener() {
+    ever(_presence.staleOfflineUsers, (Map<String, bool> staleMap) {
+      staleMap.forEach((token, isStale) {
+        if (isStale) {
+          // Update online status for this user in message list
+          state.onlineStatus[token] = 0;
+
+          // Update message list
+          final index = state.msgList.indexWhere((msg) => msg.token == token);
+          if (index != -1) {
+            state.msgList[index].online = 0;
+            state.msgList.refresh();
+            print(
+                '[MessageController] 🔍 Updated $token to offline (stale heartbeat)');
+          }
+        }
+      });
+    });
   }
 
   @override

@@ -9,6 +9,7 @@ import 'package:sakoa/common/entities/entities.dart';
 import 'package:sakoa/common/entities/contact_entity.dart';
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/widgets/toast.dart';
+import 'package:sakoa/common/services/presence_service.dart';
 import 'index.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -60,6 +61,43 @@ class ContactController extends GetxController {
 
     // Listen to online status changes for all cached profiles
     _setupOnlineStatusListener();
+
+    // 🔥 NEW: Listen to stale offline detection from PresenceService
+    _setupStaleOfflineListener();
+  }
+
+  /// 🔥 SMART: Listen to stale offline users (timeout detection)
+  void _setupStaleOfflineListener() {
+    // Use ever() to watch for changes in stale offline map
+    ever(PresenceService.to.staleOfflineUsers, (Map<String, bool> staleMap) {
+      // Update contacts list when users go offline due to stale heartbeat
+      staleMap.forEach((token, isStale) {
+        if (isStale) {
+          // This user's heartbeat is stale → Mark as offline in UI
+          _updateContactOnlineStatus(token, 0);
+        }
+      });
+    });
+    print('[ContactController] 👀 Started stale offline listener');
+  }
+
+  /// Helper to update a contact's online status
+  void _updateContactOnlineStatus(String token, int status) {
+    // Update cached profile
+    if (state.profileCache.containsKey(token)) {
+      state.profileCache[token]?.online = status;
+    }
+
+    // Update contacts list
+    for (int i = 0; i < state.acceptedContacts.length; i++) {
+      if (state.acceptedContacts[i].contact_token == token) {
+        state.acceptedContacts[i].contact_online = status;
+        state.acceptedContacts.refresh(); // Trigger UI update
+        print(
+            '[ContactController] 🔍 Updated $token to ${status == 1 ? "online" : "offline"} (stale heartbeat)');
+        break;
+      }
+    }
   }
 
   /// Listen to online status changes for contacts in real-time
