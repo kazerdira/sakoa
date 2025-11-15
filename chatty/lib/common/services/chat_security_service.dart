@@ -23,24 +23,35 @@ class ChatSecurityService extends GetxService {
   // ============ SECURITY ENFORCEMENT ============
 
   /// Apply security restrictions for a chat
+  /// If forceScreenshotBlock is true, always disable screenshots even without full restrictions
   Future<void> applyRestrictions({
     required String chatDocId,
     required String otherUserToken,
+    bool forceScreenshotBlock = false,
   }) async {
     try {
-      print('[ChatSecurity] 🔒 Applying restrictions for chat: $chatDocId');
+      print(
+          '[ChatSecurity] 🔒 Applying restrictions for chat: $chatDocId (forceScreenshotBlock: $forceScreenshotBlock)');
 
       // Get block status
       final blockStatus =
           await BlockingService.to.getBlockStatus(otherUserToken);
 
-      if (blockStatus.isBlocked && blockStatus.restrictions != null) {
-        _currentRestrictions.value = blockStatus.restrictions!;
-        await _enforceRestrictions(blockStatus.restrictions!);
-        _isSecured.value = true;
-
-        print(
-            '[ChatSecurity] ✅ Restrictions applied: ${blockStatus.restrictions!.toJson()}');
+      if (blockStatus.isBlocked) {
+        if (blockStatus.restrictions != null) {
+          // Full restrictions available (I blocked them)
+          _currentRestrictions.value = blockStatus.restrictions!;
+          await _enforceRestrictions(blockStatus.restrictions!);
+          _isSecured.value = true;
+          print(
+              '[ChatSecurity] ✅ Full restrictions applied: ${blockStatus.restrictions!.toJson()}');
+        } else if (forceScreenshotBlock) {
+          // No restrictions available (they blocked me), but force screenshot block
+          await _setScreenshotEnabled(false);
+          _isSecured.value = true;
+          print(
+              '[ChatSecurity] ✅ Screenshot blocking forced (blocked by other user)');
+        }
       } else {
         await clearRestrictions();
       }
@@ -83,23 +94,36 @@ class ChatSecurityService extends GetxService {
   Future<void> _setScreenshotEnabled(bool enabled) async {
     try {
       if (GetPlatform.isAndroid) {
+        print(
+            '[ChatSecurity] 🤖 Android detected - attempting ${enabled ? "enable" : "disable"} screenshots...');
         const platform = MethodChannel('com.chatty.sakoa/security');
 
         if (enabled) {
-          await platform.invokeMethod('clearSecureFlag');
-          print('[ChatSecurity] ✅ Screenshots enabled');
+          final result = await platform.invokeMethod('clearSecureFlag');
+          print(
+              '[ChatSecurity] ✅ Screenshots ENABLED - Native result: $result');
         } else {
-          await platform.invokeMethod('setSecureFlag');
-          print('[ChatSecurity] ✅ Screenshots disabled');
+          final result = await platform.invokeMethod('setSecureFlag');
+          print(
+              '[ChatSecurity] 🔒 Screenshots DISABLED (FLAG_SECURE set) - Native result: $result');
         }
       } else if (GetPlatform.isIOS) {
         // iOS screenshot prevention through native channel
         // Note: iOS doesn't officially support preventing screenshots,
         // but we can detect them and take action
-        print('[ChatSecurity] ⚠️ iOS screenshot prevention limited');
+        print(
+            '[ChatSecurity] 🍎 iOS detected - screenshot prevention not available (Apple limitation)');
+      } else {
+        print(
+            '[ChatSecurity] ⚠️ Unknown platform - screenshot control not available');
       }
-    } catch (e) {
-      print('[ChatSecurity] ❌ Failed to set screenshot status: $e');
+    } catch (e, stackTrace) {
+      print('[ChatSecurity] ❌ CRITICAL ERROR setting screenshot status: $e');
+      print('[ChatSecurity] 📍 Stack trace: $stackTrace');
+      print(
+          '[ChatSecurity] ⚠️ This likely means MethodChannel not connected to native code!');
+      print(
+          '[ChatSecurity] 💡 Solution: Rebuild app with "flutter clean && flutter run"');
     }
   }
 

@@ -328,14 +328,19 @@ class ChatController extends GetxController {
         return; // Allow viewing chat but disable input
       }
 
-      // Priority 2: Check ContactController
-      final contactController = Get.find<ContactController>();
-      bool isContact =
-          await contactController.isUserContact(state.to_token.value);
-      if (!isContact) {
-        toastInfo(msg: "You must be contacts to chat");
-        Get.back();
-        return;
+      // Priority 2: Check ContactController (if available)
+      try {
+        final contactController = Get.find<ContactController>();
+        bool isContact =
+            await contactController.isUserContact(state.to_token.value);
+        if (!isContact) {
+          print("[ChatController] ⚠️ User is not a contact");
+          // Note: We allow chat even if not contact (chat was already created)
+          // The contact check is more for new chats
+        }
+      } catch (e) {
+        print("[ChatController] ⚠️ ContactController not available: $e");
+        // Continue anyway - user came from an existing chat
       }
 
       print("[ChatController] ✅ Contact verified, not blocked");
@@ -344,29 +349,42 @@ class ChatController extends GetxController {
     }
   }
 
-  /// 🔥 Start real-time block monitoring
+  /// 🔥 Start real-time block monitoring - BI-DIRECTIONAL!
   void _startBlockMonitoring() {
     _blockListener?.cancel();
 
     _blockListener = BlockingService.to
         .watchBlockStatus(state.to_token.value)
         .listen((status) {
-      print("[ChatController] 🔄 Block status changed: ${status.isBlocked}");
+      print(
+          "[ChatController] 🔄 Block status changed: isBlocked=${status.isBlocked}, iBlocked=${status.iBlocked}, theyBlocked=${status.theyBlocked}");
 
       isBlocked.value = status.isBlocked;
       blockStatus.value = status;
 
-      if (status.isBlocked && status.iBlocked) {
-        // I blocked them - apply restrictions
-        ChatSecurityService.to.applyRestrictions(
-          chatDocId: doc_id,
-          otherUserToken: state.to_token.value,
-        );
-        toastInfo(msg: "User blocked with restrictions");
-      } else if (!status.isBlocked) {
+      if (status.isBlocked) {
+        if (status.iBlocked) {
+          // I blocked them - apply MY restrictions AND disable screenshots for BOTH
+          ChatSecurityService.to.applyRestrictions(
+            chatDocId: doc_id,
+            otherUserToken: state.to_token.value,
+            forceScreenshotBlock: true, // 🔥 Always block screenshots
+          );
+          toastInfo(msg: "🚫 You blocked ${state.to_name.value}");
+        } else if (status.theyBlocked) {
+          // They blocked me - disable screenshots for BOTH (even though I'm not the blocker)
+          ChatSecurityService.to.applyRestrictions(
+            chatDocId: doc_id,
+            otherUserToken: state.to_token.value,
+            forceScreenshotBlock:
+                true, // 🔥 Force screenshot block even without full restrictions
+          );
+          toastInfo(msg: "⛔ ${state.to_name.value} has blocked you");
+        }
+      } else {
         // Unblocked - clear restrictions
         ChatSecurityService.to.clearRestrictions();
-        toastInfo(msg: "User unblocked");
+        toastInfo(msg: "✅ Chat with ${state.to_name.value} unblocked");
       }
     });
   }
@@ -516,7 +534,18 @@ class ChatController extends GetxController {
             case DocumentChangeType.added:
               print("added----: ${change.doc.data()}");
               if (change.doc.data() != null) {
-                tempMsgList.add(change.doc.data()!);
+                final msg = change.doc.data()!;
+
+                // 🔥 BLOCK INCOMING MESSAGES from blocked users
+                if (msg.token != null && msg.token != token) {
+                  // This is an incoming message - check if sender is blocked
+                  if (BlockingService.to.isBlockedCached(msg.token!)) {
+                    print("⛔ Blocked incoming message from ${msg.token}");
+                    continue; // Skip this message
+                  }
+                }
+
+                tempMsgList.add(msg);
               }
               break;
             case DocumentChangeType.modified:

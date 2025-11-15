@@ -274,30 +274,83 @@ class BlockingService extends GetxService {
     });
   }
 
-  /// Watch block status for a specific user (real-time)
+  /// Watch block status for a specific user (real-time) - BI-DIRECTIONAL! 🔥
   Stream<BlockStatus> watchBlockStatus(String otherUserToken) {
-    return _db
+    // We need to monitor BOTH directions:
+    // 1. Did I block them? (blocker_token == myToken, blocked_token == otherUserToken)
+    // 2. Did they block me? (blocker_token == otherUserToken, blocked_token == myToken)
+
+    // Create a stream controller to manually combine both streams
+    final controller = StreamController<BlockStatus>();
+
+    bool? iBlocked;
+    bool? theyBlocked;
+    Map<String, dynamic>? iBlockedData;
+
+    void emitCombined() {
+      if (iBlocked == null || theyBlocked == null) return;
+
+      if (!iBlocked! && !theyBlocked!) {
+        controller.add(BlockStatus.notBlocked());
+        return;
+      }
+
+      BlockRestrictions? restrictions;
+      Timestamp? blockedAt;
+
+      if (iBlocked! && iBlockedData != null) {
+        final restrictionsData =
+            iBlockedData!['restrictions'] as Map<String, dynamic>?;
+        restrictions = restrictionsData != null
+            ? BlockRestrictions.fromJson(restrictionsData)
+            : BlockRestrictions.standard();
+        blockedAt = iBlockedData!['blocked_at'] as Timestamp?;
+      } else if (theyBlocked!) {
+        blockedAt = null; // We don't have access to their block data details
+      }
+
+      controller.add(BlockStatus(
+        iBlocked: iBlocked!,
+        theyBlocked: theyBlocked!,
+        blockedAt: blockedAt,
+        restrictions: restrictions,
+      ));
+    }
+
+    // Listen to "I blocked them" stream
+    final sub1 = _db
         .collection("blocks")
         .where("blocker_token", isEqualTo: myToken)
         .where("blocked_token", isEqualTo: otherUserToken)
         .snapshots()
-        .map((snapshot) {
-      if (snapshot.docs.isEmpty) {
-        return BlockStatus.notBlocked();
+        .listen((snapshot) {
+      iBlocked = snapshot.docs.isNotEmpty;
+      if (iBlocked!) {
+        iBlockedData = snapshot.docs.first.data();
+      } else {
+        iBlockedData = null;
       }
-
-      final data = snapshot.docs.first.data();
-      final restrictionsData = data['restrictions'] as Map<String, dynamic>?;
-
-      return BlockStatus(
-        iBlocked: true,
-        theyBlocked: false,
-        blockedAt: data['blocked_at'] as Timestamp?,
-        restrictions: restrictionsData != null
-            ? BlockRestrictions.fromJson(restrictionsData)
-            : BlockRestrictions.standard(),
-      );
+      emitCombined();
     });
+
+    // Listen to "they blocked me" stream
+    final sub2 = _db
+        .collection("blocks")
+        .where("blocker_token", isEqualTo: otherUserToken)
+        .where("blocked_token", isEqualTo: myToken)
+        .snapshots()
+        .listen((snapshot) {
+      theyBlocked = snapshot.docs.isNotEmpty;
+      emitCombined();
+    });
+
+    // Clean up subscriptions when stream is cancelled
+    controller.onCancel = () {
+      sub1.cancel();
+      sub2.cancel();
+    };
+
+    return controller.stream;
   }
 
   // ============ BATCH OPERATIONS ============

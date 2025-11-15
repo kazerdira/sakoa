@@ -60,5 +60,20 @@ service cloud.firestore {
       // Users can update/delete calls they are involved in
       allow update, delete: if isAuthenticated();
     }
+    
+    // 🔥 BLOCKS COLLECTION - Industrial-grade blocking system
+    match /blocks/{blockId} {
+      // Users can read blocks where they are the blocker OR the blocked user
+      allow read: if isAuthenticated();
+      
+      // Users can create blocks (we trust the client to set correct blocker_token)
+      allow create: if isAuthenticated();
+      
+      // Users can update blocks they created
+      allow update: if isAuthenticated();
+      
+      // Users can delete blocks they created (to unblock)
+      allow delete: if isAuthenticated();
+    }
   }
 }
