@@ -787,13 +787,13 @@ class ChatController extends GetxController {
                     continue; // Skip this message
                   }
 
-                  // 🔥 INDUSTRIAL-GRADE: Mark incoming message as delivered & read
+                  // 🔥 V2: Smart read receipts handled by MessageVisibilityDetector
+                  // No automatic marking - only when message is actually visible
+                  // Mark as delivered when received
                   if (msg.id != null && msg.delivery_status == 'sent') {
-                    _deliveryService.updateDeliveryStatus(
+                    _deliveryService.markAsDelivered(
                       chatDocId: doc_id,
                       messageId: msg.id!,
-                      status:
-                          'read', // Mark as read immediately when chat is open
                     );
                   }
                 }

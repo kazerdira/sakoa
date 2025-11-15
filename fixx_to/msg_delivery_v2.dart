@@ -14,10 +14,8 @@ import 'package:sakoa/common/store/store.dart';
 /// - Exponential backoff retry
 /// - Network quality detection
 /// - Real-time sync across devices
-/// - Priority queue system
-/// - Disk persistence for offline resilience
-class MessageDeliveryService extends GetxService {
-  static MessageDeliveryService get to => Get.find();
+class MessageDeliveryServiceV2 extends GetxService {
+  static MessageDeliveryServiceV2 get to => Get.find();
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final _deliveryCache = <String, DeliveryStatus>{}.obs;
@@ -40,7 +38,7 @@ class MessageDeliveryService extends GetxService {
   static const INITIAL_RETRY_DELAY = Duration(seconds: 2);
   static const MAX_RETRY_DELAY = Duration(minutes: 2);
   static const DELIVERY_TIMEOUT = Duration(minutes: 10);
-  static const READ_RECEIPT_DELAY = Duration(seconds: 1);
+  static const READ_RECEIPT_DELAY = Duration(seconds: 1); // Wait before marking read
   static const TIMESTAMP_GROUP_INTERVAL = Duration(minutes: 5);
 
   String get myToken => UserStore.to.profile.token ?? UserStore.to.token;
@@ -50,44 +48,35 @@ class MessageDeliveryService extends GetxService {
   final _readReceiptQueue = <ReadReceipt>[];
 
   /// Initialize service
-  Future<MessageDeliveryService> init() async {
+  Future<MessageDeliveryServiceV2> init() async {
     await GetStorage.init('message_delivery_cache_v2');
     _loadPendingMessages();
     _startConnectivityMonitoring();
     _startRetryTimer();
-    print(
-        '[MessageDeliveryServiceV2] ✅ Initialized with smart delivery tracking');
+    print('[MessageDeliveryV2] ✅ Initialized with smart delivery tracking');
     return this;
   }
 
   // ============ CONNECTIVITY MONITORING WITH QUALITY DETECTION ============
 
   void _startConnectivityMonitoring() {
-    // Initial check
     Connectivity().checkConnectivity().then((result) {
-      isOnline.value =
-          result.isNotEmpty && !result.contains(ConnectivityResult.none);
+      isOnline.value = result.isNotEmpty && !result.contains(ConnectivityResult.none);
       connectionType.value = result;
       networkQuality.value = _detectNetworkQuality(result);
-      print(
-          '[MessageDeliveryServiceV2] 📡 Initial connectivity: ${networkQuality.value.name}');
+      print('[MessageDeliveryV2] 📡 Initial connectivity: ${networkQuality.value}');
     });
 
-    // Listen to changes
-    _connectivitySubscription =
-        Connectivity().onConnectivityChanged.listen((result) {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
       final wasOffline = !isOnline.value;
-      isOnline.value =
-          result.isNotEmpty && !result.contains(ConnectivityResult.none);
+      isOnline.value = result.isNotEmpty && !result.contains(ConnectivityResult.none);
       connectionType.value = result;
       networkQuality.value = _detectNetworkQuality(result);
 
-      print(
-          '[MessageDeliveryServiceV2] 📡 Network changed: ${networkQuality.value.name}');
+      print('[MessageDeliveryV2] 📡 Network changed: ${networkQuality.value}');
 
       if (isOnline.value && wasOffline) {
-        print(
-            '[MessageDeliveryServiceV2] 🌐 Back online - Processing pending messages');
+        print('[MessageDeliveryV2] 🌐 Back online - Processing pending messages');
         _retryPendingMessages();
       }
     });
@@ -95,29 +84,24 @@ class MessageDeliveryService extends GetxService {
 
   NetworkQuality _detectNetworkQuality(List<ConnectivityResult> result) {
     if (result.contains(ConnectivityResult.none)) return NetworkQuality.offline;
-    if (result.contains(ConnectivityResult.wifi))
-      return NetworkQuality.excellent;
-    if (result.contains(ConnectivityResult.ethernet))
-      return NetworkQuality.excellent;
-    if (result.contains(ConnectivityResult.mobile))
-      return NetworkQuality.good; // Assume 4G
+    if (result.contains(ConnectivityResult.wifi)) return NetworkQuality.excellent;
+    if (result.contains(ConnectivityResult.ethernet)) return NetworkQuality.excellent;
+    if (result.contains(ConnectivityResult.mobile)) return NetworkQuality.good; // Assume 4G
     if (result.contains(ConnectivityResult.vpn)) return NetworkQuality.good;
     return NetworkQuality.unknown;
   }
 
-  // ============ MESSAGE SENDING WITH DELIVERY TRACKING ============
+  // ============ SMART MESSAGE SENDING WITH RETRY LOGIC ============
 
-  /// Send message with full delivery tracking
-  /// Returns DocumentReference for the sent message
+  /// Send message with exponential backoff retry
   Future<SendMessageResult> sendMessageWithTracking({
     required String chatDocId,
     required Msgcontent content,
     Function(double progress)? onProgress,
   }) async {
     try {
-      print('[MessageDeliveryService] 📤 Sending message...');
+      print('[MessageDeliveryV2] 📤 Sending message...');
 
-      // Step 1: Create message with 'sending' status
       final messageWithStatus = Msgcontent(
         token: content.token,
         content: content.content,
@@ -125,14 +109,13 @@ class MessageDeliveryService extends GetxService {
         addtime: content.addtime ?? Timestamp.now(),
         voice_duration: content.voice_duration,
         reply: content.reply,
-        delivery_status: 'sending', // 🔥 Initial status
+        delivery_status: 'sending',
         sent_at: null,
         delivered_at: null,
         read_at: null,
         retry_count: 0,
       );
 
-      // Step 2: Add to Firestore
       final messageRef = _db
           .collection("message")
           .doc(chatDocId)
@@ -142,22 +125,20 @@ class MessageDeliveryService extends GetxService {
             toFirestore: (Msgcontent msg, options) => msg.toFirestore(),
           );
 
-      DocumentReference<Msgcontent> docRef;
-
       try {
         // Attempt to add message
-        docRef = await messageRef.add(messageWithStatus);
-        print('[MessageDeliveryService] ✅ Message added: ${docRef.id}');
+        final docRef = await messageRef.add(messageWithStatus);
+        print('[MessageDeliveryV2] ✅ Message added: ${docRef.id}');
 
-        // Step 3: Update status to 'sent' (successfully uploaded)
+        // Update status to 'sent'
         await docRef.update({
           'delivery_status': 'sent',
           'sent_at': FieldValue.serverTimestamp(),
         });
 
-        print('[MessageDeliveryService] ✅ Message status updated to SENT');
+        print('[MessageDeliveryV2] ✅ Message status updated to SENT');
 
-        // Step 4: Cache delivery status
+        // Cache delivery status
         _cacheDeliveryStatus(
           messageId: docRef.id,
           status: DeliveryStatus(
@@ -170,11 +151,9 @@ class MessageDeliveryService extends GetxService {
 
         return SendMessageResult.success(docRef.id);
       } catch (e) {
-        // Network error or offline
-        if (!isOnline.value ||
-            e.toString().contains('network') ||
-            e.toString().contains('UNAVAILABLE')) {
-          print('[MessageDeliveryServiceV2] 📡 Message queued (offline)');
+        // Network error - queue for retry
+        if (!isOnline.value || e.toString().contains('network') || e.toString().contains('UNAVAILABLE')) {
+          print('[MessageDeliveryV2] 📡 Message queued (offline)');
 
           final tempId = 'pending_${DateTime.now().millisecondsSinceEpoch}';
           final pending = PendingMessage(
@@ -192,60 +171,12 @@ class MessageDeliveryService extends GetxService {
           return SendMessageResult.queued(tempId);
         }
 
-        // Other error
         throw e;
       }
     } catch (e, stackTrace) {
-      print('[MessageDeliveryService] ❌ Send failed: $e');
-      print('[MessageDeliveryService] Stack: $stackTrace');
+      print('[MessageDeliveryV2] ❌ Send failed: $e');
+      print('[MessageDeliveryV2] Stack: $stackTrace');
       return SendMessageResult.error(e.toString());
-    }
-  }
-
-  /// Update delivery status (called when message is delivered/read)
-  Future<void> updateDeliveryStatus({
-    required String chatDocId,
-    required String messageId,
-    required String status, // 'delivered' or 'read'
-  }) async {
-    try {
-      print(
-          '[MessageDeliveryService] 🔄 Updating status to $status: $messageId');
-
-      final updates = <String, dynamic>{
-        'delivery_status': status,
-      };
-
-      if (status == 'delivered') {
-        updates['delivered_at'] = FieldValue.serverTimestamp();
-      } else if (status == 'read') {
-        updates['read_at'] = FieldValue.serverTimestamp();
-      }
-
-      // Queue update for batch processing with priority
-      _statusUpdateQueue.add(StatusUpdate(
-        chatDocId: chatDocId,
-        messageId: messageId,
-        status: status,
-        timestamp: DateTime.now(),
-        priority: 2, // Medium priority
-      ));
-
-      // Process high-priority updates immediately
-      _processHighPriorityUpdates();
-
-      // Update cache immediately for responsive UI
-      if (_deliveryCache.containsKey(messageId)) {
-        final cached = _deliveryCache[messageId]!;
-        _deliveryCache[messageId] = cached.copyWith(
-          status: status,
-          deliveredAt:
-              status == 'delivered' ? DateTime.now() : cached.deliveredAt,
-          readAt: status == 'read' ? DateTime.now() : cached.readAt,
-        );
-      }
-    } catch (e) {
-      print('[MessageDeliveryServiceV2] ❌ Failed to update status: $e');
     }
   }
 
@@ -300,8 +231,7 @@ class MessageDeliveryService extends GetxService {
 
     if (receiptsToProcess.isEmpty) return;
 
-    print(
-        '[MessageDeliveryServiceV2] 👁️ Processing ${receiptsToProcess.length} read receipts');
+    print('[MessageDeliveryV2] 👁️ Processing ${receiptsToProcess.length} read receipts');
 
     final batch = _db.batch();
 
@@ -322,10 +252,9 @@ class MessageDeliveryService extends GetxService {
 
     try {
       await batch.commit();
-      print(
-          '[MessageDeliveryServiceV2] ✅ Batch updated ${receiptsToProcess.length} read receipts');
+      print('[MessageDeliveryV2] ✅ Batch updated ${receiptsToProcess.length} read receipts');
     } catch (e) {
-      print('[MessageDeliveryServiceV2] ❌ Read receipt batch failed: $e');
+      print('[MessageDeliveryV2] ❌ Read receipt batch failed: $e');
     }
   }
 
@@ -342,9 +271,6 @@ class MessageDeliveryService extends GetxService {
     if (highPriority.isEmpty) return;
 
     final batch = _db.batch();
-
-    print(
-        '[MessageDeliveryServiceV2] 🔄 Processing ${highPriority.length} high-priority status updates');
 
     for (final update in highPriority) {
       final docRef = _db
@@ -369,17 +295,13 @@ class MessageDeliveryService extends GetxService {
 
     try {
       await batch.commit();
-      print(
-          '[MessageDeliveryServiceV2] ✅ Processed ${highPriority.length} high-priority updates');
+      print('[MessageDeliveryV2] ✅ Processed ${highPriority.length} high-priority updates');
     } catch (e) {
-      print('[MessageDeliveryServiceV2] ❌ High-priority batch failed: $e');
+      print('[MessageDeliveryV2] ❌ High-priority batch failed: $e');
       _statusUpdateQueue.addAll(highPriority); // Re-queue
     }
   }
 
-  // ============ OFFLINE QUEUE MANAGEMENT ============
-
-  /// Retry pending messages when back online
   // ============ EXPONENTIAL BACKOFF RETRY ============
 
   void _startRetryTimer() {
@@ -405,7 +327,7 @@ class MessageDeliveryService extends GetxService {
 
       // Check max attempts
       if (pending.attempts >= MAX_RETRY_ATTEMPTS) {
-        print('[MessageDeliveryServiceV2] ❌ Max retries reached: ${entry.key}');
+        print('[MessageDeliveryV2] ❌ Max retries reached: ${entry.key}');
         _pendingMessages.remove(entry.key);
         _savePendingMessages();
         continue;
@@ -417,8 +339,7 @@ class MessageDeliveryService extends GetxService {
             .clamp(INITIAL_RETRY_DELAY.inSeconds, MAX_RETRY_DELAY.inSeconds),
       );
 
-      print(
-          '[MessageDeliveryServiceV2] 🔄 Retrying message (attempt ${pending.attempts + 1}/$MAX_RETRY_ATTEMPTS)');
+      print('[MessageDeliveryV2] 🔄 Retrying message (attempt ${pending.attempts + 1}/${MAX_RETRY_ATTEMPTS})');
 
       try {
         // Retry send
@@ -428,7 +349,7 @@ class MessageDeliveryService extends GetxService {
         );
 
         if (result.success) {
-          print('[MessageDeliveryServiceV2] ✅ Retry successful: ${entry.key}');
+          print('[MessageDeliveryV2] ✅ Retry successful: ${entry.key}');
           _pendingMessages.remove(entry.key);
           _savePendingMessages();
         } else {
@@ -444,7 +365,7 @@ class MessageDeliveryService extends GetxService {
           _savePendingMessages();
         }
       } catch (e) {
-        print('[MessageDeliveryServiceV2] ❌ Retry failed: $e');
+        print('[MessageDeliveryV2] ❌ Retry failed: $e');
         _pendingMessages[entry.key] = PendingMessage(
           tempId: pending.tempId,
           chatDocId: pending.chatDocId,
@@ -461,8 +382,7 @@ class MessageDeliveryService extends GetxService {
   // ============ PERSISTENCE FOR OFFLINE RESILIENCE ============
 
   void _savePendingMessages() {
-    final data =
-        _pendingMessages.map((key, value) => MapEntry(key, value.toJson()));
+    final data = _pendingMessages.map((key, value) => MapEntry(key, value.toJson()));
     _storage.write('pending_messages', data);
   }
 
@@ -471,131 +391,13 @@ class MessageDeliveryService extends GetxService {
       final data = _storage.read<Map<String, dynamic>>('pending_messages');
       if (data != null) {
         _pendingMessages.value = data.map((key, value) {
-          return MapEntry(
-              key, PendingMessage.fromJson(Map<String, dynamic>.from(value)));
+          return MapEntry(key, PendingMessage.fromJson(Map<String, dynamic>.from(value)));
         });
-        print(
-            '[MessageDeliveryServiceV2] ✅ Loaded ${_pendingMessages.length} pending messages from disk');
+        print('[MessageDeliveryV2] ✅ Loaded ${_pendingMessages.length} pending messages from disk');
       }
     } catch (e) {
-      print(
-          '[MessageDeliveryServiceV2] ⚠️ Failed to load pending messages: $e');
+      print('[MessageDeliveryV2] ⚠️ Failed to load pending messages: $e');
     }
-  }
-
-  /// Mark messages stuck in "sending" state as failed after timeout
-  Future<void> checkStaleMessages({
-    required String chatDocId,
-    Duration timeout = DELIVERY_TIMEOUT,
-  }) async {
-    try {
-      final timeoutTimestamp = Timestamp.fromDate(
-        DateTime.now().subtract(timeout),
-      );
-
-      // Find messages stuck in "sending" for more than timeout period
-      final staleMessages = await _db
-          .collection("message")
-          .doc(chatDocId)
-          .collection("msglist")
-          .where('delivery_status', isEqualTo: 'sending')
-          .where('addtime', isLessThan: timeoutTimestamp)
-          .get();
-
-      if (staleMessages.docs.isEmpty) return;
-
-      print(
-          '[MessageDeliveryServiceV2] ⚠️ Found ${staleMessages.docs.length} stale messages');
-
-      final batch = _db.batch();
-      for (final doc in staleMessages.docs) {
-        batch.update(doc.reference, {
-          'delivery_status': 'failed',
-          'retry_count': FieldValue.increment(1),
-        });
-      }
-
-      await batch.commit();
-      print('[MessageDeliveryServiceV2] ✅ Marked stale messages as failed');
-    } catch (e) {
-      print('[MessageDeliveryServiceV2] ❌ Failed to check stale messages: $e');
-    }
-  }
-
-  // ============ DELIVERY STATUS TRACKING ============
-
-  /// Watch delivery status for a message (real-time)
-  Stream<DeliveryStatus> watchDeliveryStatus({
-    required String chatDocId,
-    required String messageId,
-  }) {
-    return _db
-        .collection("message")
-        .doc(chatDocId)
-        .collection("msglist")
-        .doc(messageId)
-        .snapshots()
-        .map((snapshot) {
-      if (!snapshot.exists) {
-        return DeliveryStatus.failed(messageId);
-      }
-
-      final data = snapshot.data();
-      final status = data?['delivery_status'] as String? ?? 'unknown';
-
-      return DeliveryStatus(
-        messageId: messageId,
-        status: status,
-        sentAt: (data?['sent_at'] as Timestamp?)?.toDate(),
-        deliveredAt: (data?['delivered_at'] as Timestamp?)?.toDate(),
-        readAt: (data?['read_at'] as Timestamp?)?.toDate(),
-        lastUpdated: DateTime.now(),
-      );
-    });
-  }
-
-  /// Get cached delivery status (instant, no Firestore read)
-  DeliveryStatus? getCachedStatus(String messageId) {
-    return _deliveryCache[messageId];
-  }
-
-  /// Cache delivery status for fast lookups
-  void _cacheDeliveryStatus({
-    required String messageId,
-    required DeliveryStatus status,
-  }) {
-    _deliveryCache[messageId] = status;
-    _storage.write('status_$messageId', status.toJson());
-  }
-
-  // ============ HELPER METHODS ============
-
-  /// Check if message is still pending (local queue)
-  bool isMessagePending(String messageId) {
-    return _pendingMessages.containsKey(messageId);
-  }
-
-  /// Get pending message count
-  int get pendingCount => _pendingMessages.length;
-
-  /// Check if currently online
-  bool get isConnected => isOnline.value;
-
-  // ============ LIFECYCLE ============
-
-  @override
-  void onClose() {
-    print('[MessageDeliveryServiceV2] 🛑 Cleaning up...');
-    _connectivitySubscription?.cancel();
-    _retryTimer?.cancel();
-
-    // Cancel all message listeners
-    for (final listener in _messageListeners.values) {
-      listener.cancel();
-    }
-    _messageListeners.clear();
-
-    super.onClose();
   }
 
   // ============ TIMESTAMP GROUPING (5-MIN INTERVALS) ============
@@ -612,11 +414,55 @@ class MessageDeliveryService extends GetxService {
     final timeDiff = currentTime.difference(previousTime);
     return timeDiff >= TIMESTAMP_GROUP_INTERVAL;
   }
+
+  // ============ HELPER METHODS ============
+
+  void _cacheDeliveryStatus({
+    required String messageId,
+    required DeliveryStatus status,
+  }) {
+    _deliveryCache[messageId] = status;
+    _storage.write('status_$messageId', status.toJson());
+  }
+
+  DeliveryStatus? getCachedStatus(String messageId) {
+    return _deliveryCache[messageId];
+  }
+
+  bool isMessagePending(String messageId) {
+    return _pendingMessages.containsKey(messageId);
+  }
+
+  int get pendingCount => _pendingMessages.length;
+
+  bool get isConnected => isOnline.value;
+
+  @override
+  void onClose() {
+    print('[MessageDeliveryV2] 🛑 Cleaning up...');
+    _connectivitySubscription?.cancel();
+    _retryTimer?.cancel();
+
+    for (final listener in _messageListeners.values) {
+      listener.cancel();
+    }
+    _messageListeners.clear();
+
+    super.onClose();
+  }
 }
 
-// ============ DATA MODELS ============
+// ============ ENHANCED DATA MODELS ============
 
-/// Result of sending a message
+enum NetworkQuality {
+  offline,
+  poor,      // 2G
+  fair,      // 3G
+  good,      // 4G/LTE
+  excellent, // 5G/WiFi
+  unknown,
+}
+
 class SendMessageResult {
   final bool success;
   final bool queued;
@@ -640,10 +486,9 @@ class SendMessageResult {
       SendMessageResult._(success: false, queued: false, error: error);
 }
 
-/// Delivery status for a message
 class DeliveryStatus {
   final String messageId;
-  final String status; // 'sending', 'sent', 'delivered', 'read', 'failed'
+  final String status;
   final DateTime? sentAt;
   final DateTime? deliveredAt;
   final DateTime? readAt;
@@ -692,15 +537,12 @@ class DeliveryStatus {
         messageId: json['messageId'],
         status: json['status'],
         sentAt: json['sentAt'] != null ? DateTime.parse(json['sentAt']) : null,
-        deliveredAt: json['deliveredAt'] != null
-            ? DateTime.parse(json['deliveredAt'])
-            : null,
+        deliveredAt: json['deliveredAt'] != null ? DateTime.parse(json['deliveredAt']) : null,
         readAt: json['readAt'] != null ? DateTime.parse(json['readAt']) : null,
         lastUpdated: DateTime.parse(json['lastUpdated']),
       );
 }
 
-/// Pending message in offline queue
 class PendingMessage {
   final String tempId;
   final String chatDocId;
@@ -727,36 +569,16 @@ class PendingMessage {
         'nextRetryAt': nextRetryAt.toIso8601String(),
       };
 
-  factory PendingMessage.fromJson(Map<String, dynamic> json) {
-    // Reconstruct Msgcontent from stored map
-    final contentMap = Map<String, dynamic>.from(json['content']);
-    return PendingMessage(
-      tempId: json['tempId'],
-      chatDocId: json['chatDocId'],
-      content: Msgcontent(
-        token: contentMap['token'],
-        content: contentMap['content'],
-        type: contentMap['type'],
-        addtime: contentMap['addtime'] != null
-            ? Timestamp.fromMillisecondsSinceEpoch(
-                contentMap['addtime']['_seconds'] * 1000)
-            : null,
-        voice_duration: contentMap['voice_duration'],
-        reply: null, // Simplified for persistence
-        delivery_status: contentMap['delivery_status'],
-        sent_at: contentMap['sent_at'],
-        delivered_at: contentMap['delivered_at'],
-        read_at: contentMap['read_at'],
-        retry_count: contentMap['retry_count'],
-      ),
-      attempts: json['attempts'],
-      queuedAt: DateTime.parse(json['queuedAt']),
-      nextRetryAt: DateTime.parse(json['nextRetryAt']),
-    );
-  }
+  factory PendingMessage.fromJson(Map<String, dynamic> json) => PendingMessage(
+        tempId: json['tempId'],
+        chatDocId: json['chatDocId'],
+        content: Msgcontent.fromJson(json['content']),
+        attempts: json['attempts'],
+        queuedAt: DateTime.parse(json['queuedAt']),
+        nextRetryAt: DateTime.parse(json['nextRetryAt']),
+      );
 }
 
-/// Status update for batch processing
 class StatusUpdate {
   final String chatDocId;
   final String messageId;
@@ -769,21 +591,10 @@ class StatusUpdate {
     required this.messageId,
     required this.status,
     required this.timestamp,
-    this.priority = 1, // Default priority
+    this.priority = 1,
   });
 }
 
-/// Network quality enum
-enum NetworkQuality {
-  offline,
-  poor, // 2G
-  fair, // 3G
-  good, // 4G/LTE
-  excellent, // 5G/WiFi
-  unknown,
-}
-
-/// Read receipt for smart visibility-based tracking
 class ReadReceipt {
   final String chatDocId;
   final String messageId;

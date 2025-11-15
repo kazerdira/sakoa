@@ -180,7 +180,11 @@ void _showMessageOptions(BuildContext context, Msgcontent item) {
   );
 }
 
-Widget ChatRightItem(Msgcontent item) {
+Widget ChatRightItem(
+  Msgcontent item, {
+  bool isLastMessage = false,
+  Msgcontent? previousMessage,
+}) {
   return GestureDetector(
     onLongPress: () {
       final context = Get.context;
@@ -276,7 +280,9 @@ Widget ChatRightItem(Msgcontent item) {
                         ),
                       ),
                       SizedBox(width: 4.w),
-                      _buildDeliveryStatusIcon(item.delivery_status),
+                      // 🔥 V2: Show delivery status ONLY for last message
+                      if (isLastMessage)
+                        _buildDeliveryStatusIcon(item.delivery_status),
                     ],
                   ),
                 ),
