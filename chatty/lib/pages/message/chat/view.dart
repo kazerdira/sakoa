@@ -6,6 +6,10 @@ import 'index.dart';
 import 'package:sakoa/common/values/values.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+// 🔥 Voice & Reply widgets
+import 'package:sakoa/pages/message/chat/widgets/voice_recording_widget.dart';
+import 'package:sakoa/pages/message/chat/widgets/reply_preview_widget.dart';
+import 'package:sakoa/pages/message/chat/widgets/slide_to_cancel.dart';
 
 class ChatPage extends GetView<ChatController> {
   AppBar _buildAppBar() {
@@ -108,23 +112,25 @@ class ChatPage extends GetView<ChatController> {
                           ),
                         ),
                 ),
-                Positioned(
-                  bottom: 5.w,
-                  right: 0.w,
-                  height: 14.w,
-                  child: Container(
-                    width: 14.w,
+                // 🔥 Only show online status if NOT blocked
+                if (!controller.isBlocked.value)
+                  Positioned(
+                    bottom: 5.w,
+                    right: 0.w,
                     height: 14.w,
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                          width: 2.w, color: AppColors.primaryElementText),
-                      color: controller.state.to_online.value == "1"
-                          ? AppColors.primaryElementStatus
-                          : AppColors.primarySecondaryElementText,
-                      borderRadius: BorderRadius.all(Radius.circular(12.w)),
+                    child: Container(
+                      width: 14.w,
+                      height: 14.w,
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                            width: 2.w, color: AppColors.primaryElementText),
+                        color: controller.state.to_online.value == "1"
+                            ? AppColors.primaryElementStatus
+                            : AppColors.primarySecondaryElementText,
+                        borderRadius: BorderRadius.all(Radius.circular(12.w)),
+                      ),
                     ),
-                  ),
-                )
+                  )
               ]),
             )) // Close Obx
       ],
@@ -226,95 +232,147 @@ class ChatPage extends GetView<ChatController> {
                 alignment: Alignment.center,
                 children: <Widget>[
                   ChatList(),
-                  // 🔥 Show disabled input if blocked, normal input otherwise
+                  // 🔥 Reply Preview (shows above input when replying)
+                  if (controller.isReplyMode.value &&
+                      controller.replyingTo.value != null)
+                    Positioned(
+                      bottom: 70.h,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        color: AppColors.primaryBackground,
+                        child: ReplyPreviewWidget(
+                          reply: controller.replyingTo.value!,
+                          onClose: controller.clearReplyMode,
+                          isMyMessage:
+                              false, // Will be determined dynamically in the widget
+                        ),
+                      ),
+                    ),
+
+                  // 🔥 Input Section (blocked, voice recording, or normal)
                   Positioned(
                     bottom: 0.h,
                     child: controller.isBlocked.value
                         ? _buildDisabledInput()
-                        : Container(
-                            width: 360.w,
-                            constraints: BoxConstraints(
-                                maxHeight: 170.h, minHeight: 70.h),
-                            padding: EdgeInsets.only(
-                                left: 20.w,
-                                right: 20.w,
-                                bottom: 10.h,
-                                top: 10.h),
-                            color: AppColors.primaryBackground,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: <Widget>[
-                                Container(
-                                    width: 270.w,
-                                    constraints: BoxConstraints(
-                                        maxHeight: 170.h, minHeight: 30.h),
-                                    padding:
-                                        EdgeInsets.only(top: 5.h, bottom: 5.h),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primaryBackground,
-                                      border: Border.all(
-                                          color: AppColors
-                                              .primarySecondaryElementText),
-                                      borderRadius:
-                                          BorderRadius.all(Radius.circular(5)),
-                                    ),
-                                    child: Row(children: [
-                                      Container(
-                                        width: 220.w,
+                        : controller.isRecordingVoice.value
+                            ? SlideToCancel(
+                                onCancel: () {
+                                  controller.recordingCancelled.value = true;
+                                },
+                                child: Container(
+                                  width: 360.w,
+                                  height: 70.h,
+                                  padding: EdgeInsets.only(
+                                    left: 20.w,
+                                    right: 20.w,
+                                    bottom: 10.h,
+                                    top: 10.h,
+                                  ),
+                                  color: AppColors.primaryBackground,
+                                  child: VoiceRecordingWidget(
+                                    onSend: controller.stopAndSendVoiceMessage,
+                                    onCancel: controller.cancelVoiceRecording,
+                                  ),
+                                ),
+                              )
+                            : Container(
+                                width: 360.w,
+                                constraints: BoxConstraints(
+                                    maxHeight: 170.h, minHeight: 70.h),
+                                padding: EdgeInsets.only(
+                                    left: 20.w,
+                                    right: 20.w,
+                                    bottom: 10.h,
+                                    top: 10.h),
+                                color: AppColors.primaryBackground,
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: <Widget>[
+                                    Container(
+                                        width: 220
+                                            .w, // Reduced from 270 to fit voice button
                                         constraints: BoxConstraints(
-                                            maxHeight: 150.h, minHeight: 20.h),
-                                        child: TextField(
-                                          keyboardType: TextInputType.multiline,
-                                          maxLines: null,
-                                          controller:
-                                              controller.myinputController,
-                                          autofocus: false,
-                                          decoration: InputDecoration(
-                                            hintText: "Message...",
-                                            isDense: true,
-                                            contentPadding: EdgeInsets.only(
-                                                left: 10.w, top: 0, bottom: 0),
-                                            border: OutlineInputBorder(
-                                              borderSide: BorderSide(
-                                                color: Colors.transparent,
-                                              ),
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderSide: BorderSide(
-                                                color: Colors.transparent,
-                                              ),
-                                            ),
-                                            disabledBorder: OutlineInputBorder(
-                                              borderSide: BorderSide(
-                                                color: Colors.transparent,
-                                              ),
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderSide: BorderSide(
-                                                color: Colors.transparent,
-                                              ),
-                                            ),
-                                            hintStyle: TextStyle(
+                                            maxHeight: 170.h, minHeight: 30.h),
+                                        padding: EdgeInsets.only(
+                                            top: 5.h, bottom: 5.h),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryBackground,
+                                          border: Border.all(
                                               color: AppColors
-                                                  .primarySecondaryElementText,
+                                                  .primarySecondaryElementText),
+                                          borderRadius: BorderRadius.all(
+                                              Radius.circular(5)),
+                                        ),
+                                        child: Row(children: [
+                                          Container(
+                                            width: 170
+                                                .w, // Reduced to fit send button
+                                            constraints: BoxConstraints(
+                                                maxHeight: 150.h,
+                                                minHeight: 20.h),
+                                            child: TextField(
+                                              keyboardType:
+                                                  TextInputType.multiline,
+                                              maxLines: null,
+                                              controller:
+                                                  controller.myinputController,
+                                              autofocus: false,
+                                              focusNode:
+                                                  controller.contentFocus,
+                                              decoration: InputDecoration(
+                                                hintText: "Message...",
+                                                isDense: true,
+                                                contentPadding: EdgeInsets.only(
+                                                    left: 10.w,
+                                                    top: 0,
+                                                    bottom: 0),
+                                                border: OutlineInputBorder(
+                                                  borderSide: BorderSide(
+                                                    color: Colors.transparent,
+                                                  ),
+                                                ),
+                                                enabledBorder:
+                                                    OutlineInputBorder(
+                                                  borderSide: BorderSide(
+                                                    color: Colors.transparent,
+                                                  ),
+                                                ),
+                                                disabledBorder:
+                                                    OutlineInputBorder(
+                                                  borderSide: BorderSide(
+                                                    color: Colors.transparent,
+                                                  ),
+                                                ),
+                                                focusedBorder:
+                                                    OutlineInputBorder(
+                                                  borderSide: BorderSide(
+                                                    color: Colors.transparent,
+                                                  ),
+                                                ),
+                                                hintStyle: TextStyle(
+                                                  color: AppColors
+                                                      .primarySecondaryElementText,
+                                                ),
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ),
-                                      GestureDetector(
-                                        child: Container(
-                                          width: 40.w,
-                                          height: 40.h,
-                                          child: Image.asset(
-                                              "assets/icons/send.png"),
-                                        ),
-                                        onTap: () {
-                                          controller.sendMessage();
-                                        },
-                                      )
-                                    ])),
-                                GestureDetector(
-                                    child: Container(
+                                          GestureDetector(
+                                            child: Container(
+                                              width: 40.w,
+                                              height: 40.h,
+                                              child: Image.asset(
+                                                  "assets/icons/send.png"),
+                                            ),
+                                            onTap: () {
+                                              controller.sendMessage();
+                                            },
+                                          )
+                                        ])),
+                                    // 🔥 Voice Button
+                                    GestureDetector(
+                                      child: Container(
                                         height: 40.w,
                                         width: 40.w,
                                         padding: EdgeInsets.all(8.w),
@@ -326,25 +384,53 @@ class ChatPage extends GetView<ChatController> {
                                                   Colors.grey.withOpacity(0.2),
                                               spreadRadius: 2,
                                               blurRadius: 2,
-                                              offset: Offset(1,
-                                                  1), // changes position of shadow
+                                              offset: Offset(1, 1),
                                             ),
                                           ],
                                           borderRadius: BorderRadius.all(
                                               Radius.circular(40.w)),
                                         ),
-                                        child: controller
-                                                .state.more_status.value
-                                            ? Image.asset("assets/icons/by.png")
-                                            : Image.asset(
-                                                "assets/icons/add.png")),
-                                    onTap: () {
-                                      controller.goMore();
-                                    }),
-                              ],
-                            ),
-                          ),
-                  ), // Closes ternary operator for normal input
+                                        child: Icon(
+                                          Icons.mic,
+                                          color: AppColors.primaryBackground,
+                                          size: 20.w,
+                                        ),
+                                      ),
+                                      onTap: controller.startVoiceRecording,
+                                    ),
+                                    // More button
+                                    GestureDetector(
+                                        child: Container(
+                                            height: 40.w,
+                                            width: 40.w,
+                                            padding: EdgeInsets.all(8.w),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.primaryElement,
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.grey
+                                                      .withOpacity(0.2),
+                                                  spreadRadius: 2,
+                                                  blurRadius: 2,
+                                                  offset: Offset(1, 1),
+                                                ),
+                                              ],
+                                              borderRadius: BorderRadius.all(
+                                                  Radius.circular(40.w)),
+                                            ),
+                                            child: controller
+                                                    .state.more_status.value
+                                                ? Image.asset(
+                                                    "assets/icons/by.png")
+                                                : Image.asset(
+                                                    "assets/icons/add.png")),
+                                        onTap: () {
+                                          controller.goMore();
+                                        }),
+                                  ],
+                                ),
+                              ),
+                  ), // Closes ternary operator for input section
 
                   controller.state.more_status.value
                       ? Positioned(

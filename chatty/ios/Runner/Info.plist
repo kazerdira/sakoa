@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plis	<key>NSMicrophoneUsageDescription</key>
+    <string>Chatty requires access to the Microphone so you can make calls and record voice messages.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>The app needs the location, Get the location of your city and match the corresponding profile</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Chatty requires access to the photos library so you can upload photos and save voice messages.</string>IC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>

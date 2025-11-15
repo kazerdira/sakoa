@@ -22,6 +22,7 @@ import 'package:sakoa/pages/contact/index.dart';
 import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/widgets/block_settings_dialog.dart';
+import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 NEW: Voice messaging
 
 class ChatController extends GetxController {
   ChatController();
@@ -43,6 +44,13 @@ class ChatController extends GetxController {
   final isBlocked = false.obs;
   final blockStatus = Rx<BlockStatus?>(null);
   StreamSubscription? _blockListener;
+
+  // 🔥 VOICE MESSAGING & REPLY SYSTEM
+  late final VoiceMessageService _voiceService;
+  final replyingTo = Rx<MessageReply?>(null);
+  final isReplyMode = false.obs;
+  final isRecordingVoice = false.obs;
+  final recordingCancelled = false.obs;
 
   goMore() {
     state.more_status.value = state.more_status.value ? false : true;
@@ -119,11 +127,15 @@ class ChatController extends GetxController {
       return;
     }
     print("---------------chat--${sendcontent}-----------------");
+
+    // 🔥 CREATE MESSAGE WITH REPLY SUPPORT
     final content = Msgcontent(
       token: token,
       content: sendcontent,
       type: "text",
       addtime: Timestamp.now(),
+      reply:
+          isReplyMode.value ? replyingTo.value : null, // 🔥 Add reply if exists
     );
 
     await db
@@ -165,6 +177,9 @@ class ChatController extends GetxController {
       });
     }
     sendNotifications("text");
+
+    // 🔥 CLEAR REPLY MODE after sending
+    clearReplyMode();
   }
 
   sendImageMessage(String url) async {
@@ -240,6 +255,218 @@ class ChatController extends GetxController {
     } else {
       // Get.snackbar("Tips", "Notification error!");
       // Get.offAllNamed(AppRoutes.Message);
+    }
+  }
+
+  // ============ 🔥 VOICE MESSAGING METHODS ============
+
+  /// Start recording voice message
+  Future<void> startVoiceRecording() async {
+    if (isBlocked.value) {
+      toastInfo(msg: "Cannot send voice message to blocked user");
+      return;
+    }
+
+    final success = await _voiceService.startRecording();
+    if (success) {
+      isRecordingVoice.value = true;
+      recordingCancelled.value = false;
+      state.more_status.value = false; // Hide more menu
+      print('[ChatController] 🎤 Voice recording started');
+    }
+  }
+
+  /// Stop recording and send voice message
+  Future<void> stopAndSendVoiceMessage() async {
+    try {
+      if (!isRecordingVoice.value) return;
+
+      // Check if recording was cancelled
+      if (recordingCancelled.value) {
+        await _voiceService.cancelRecording();
+        isRecordingVoice.value = false;
+        recordingCancelled.value = false;
+        print('[ChatController] ❌ Voice recording cancelled by user');
+        return;
+      }
+
+      print('[ChatController] 🎤 Stopping recording...');
+      final localPath = await _voiceService.stopRecording();
+      isRecordingVoice.value = false;
+
+      if (localPath == null) {
+        print('[ChatController] ❌ No recording file');
+        return;
+      }
+
+      // Show uploading indicator
+      EasyLoading.show(
+        status: 'Uploading voice message...',
+        maskType: EasyLoadingMaskType.clear,
+      );
+
+      // Upload to Firebase Storage
+      print('[ChatController] ☁️ Uploading voice message...');
+      final audioUrl = await _voiceService.uploadVoiceMessage(localPath);
+
+      if (audioUrl == null) {
+        EasyLoading.dismiss();
+        print('[ChatController] ❌ Upload failed');
+        return;
+      }
+
+      // Send voice message to Firestore
+      await sendVoiceMessage(audioUrl, _voiceService.recordingDuration.value);
+
+      EasyLoading.dismiss();
+      print('[ChatController] ✅ Voice message sent successfully');
+    } catch (e, stackTrace) {
+      print('[ChatController] ❌ Failed to send voice message: $e');
+      print('[ChatController] Stack trace: $stackTrace');
+      EasyLoading.dismiss();
+      toastInfo(msg: "Failed to send voice message");
+      isRecordingVoice.value = false;
+    }
+  }
+
+  /// Cancel voice recording
+  Future<void> cancelVoiceRecording() async {
+    recordingCancelled.value = true;
+    await stopAndSendVoiceMessage(); // This will handle the cancellation
+  }
+
+  /// Send voice message to Firestore
+  Future<void> sendVoiceMessage(String audioUrl, Duration duration) async {
+    try {
+      print('[ChatController] 📤 Sending voice message to Firestore...');
+
+      // Create voice message content
+      final content = Msgcontent(
+        token: token,
+        content: audioUrl,
+        type: "voice",
+        addtime: Timestamp.now(),
+        voice_duration: duration.inSeconds, // Store duration in seconds
+        reply: isReplyMode.value
+            ? replyingTo.value
+            : null, // 🔥 Add reply if exists
+      );
+
+      // Save to Firestore
+      await db
+          .collection("message")
+          .doc(doc_id)
+          .collection("msglist")
+          .withConverter(
+            fromFirestore: Msgcontent.fromFirestore,
+            toFirestore: (Msgcontent msgcontent, options) =>
+                msgcontent.toFirestore(),
+          )
+          .add(content);
+
+      // Update chat metadata
+      var message_res = await db
+          .collection("message")
+          .doc(doc_id)
+          .withConverter(
+            fromFirestore: Msg.fromFirestore,
+            toFirestore: (Msg msg, options) => msg.toFirestore(),
+          )
+          .get();
+
+      if (message_res.data() != null) {
+        var item = message_res.data()!;
+        int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+        int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
+
+        if (item.from_token == token) {
+          from_msg_num = from_msg_num + 1;
+        } else {
+          to_msg_num = to_msg_num + 1;
+        }
+
+        await db.collection("message").doc(doc_id).update({
+          "to_msg_num": to_msg_num,
+          "from_msg_num": from_msg_num,
+          "last_msg": "🎤 Voice message",
+          "last_time": Timestamp.now()
+        });
+      }
+
+      // Send notification
+      sendNotifications("voice");
+
+      // Clear reply mode
+      clearReplyMode();
+
+      print('[ChatController] ✅ Voice message saved to Firestore');
+    } catch (e, stackTrace) {
+      print('[ChatController] ❌ Failed to save voice message: $e');
+      print('[ChatController] Stack trace: $stackTrace');
+      throw e;
+    }
+  }
+
+  // ============ 🔥 REPLY METHODS ============
+
+  /// Set message to reply to
+  void setReplyTo(Msgcontent message) {
+    try {
+      // Convert Msgcontent to MessageReply
+      replyingTo.value = MessageReply(
+        originalMessageId: message.id ?? '',
+        originalContent: message.content ?? '',
+        originalType: message.type ?? 'text',
+        originalSenderToken: message.token ?? '',
+        originalSenderName: state.to_name.value, // Assuming other user sent it
+        originalTimestamp: message.addtime,
+        voiceDuration: message.voice_duration,
+      );
+      isReplyMode.value = true;
+
+      // Auto-focus text input
+      contentFocus.requestFocus();
+
+      print('[ChatController] 💬 Reply mode activated: ${replyingTo.value}');
+    } catch (e) {
+      print('[ChatController] ❌ Failed to set reply: $e');
+      toastInfo(msg: "Failed to reply to message");
+    }
+  }
+
+  /// Clear reply mode
+  void clearReplyMode() {
+    replyingTo.value = null;
+    isReplyMode.value = false;
+    print('[ChatController] ❌ Reply mode cleared');
+  }
+
+  /// Scroll to original message (when tapping reply preview)
+  Future<void> scrollToMessage(String messageId) async {
+    try {
+      // Find message index in list
+      final index =
+          state.msgcontentList.indexWhere((msg) => msg.id == messageId);
+
+      if (index == -1) {
+        toastInfo(msg: "Original message not found");
+        print('[ChatController] ⚠️ Message not found: $messageId');
+        return;
+      }
+
+      // Calculate scroll position (reverse list, so index from bottom)
+      final scrollPosition = index * 100.0; // Approximate height per message
+
+      // Animate scroll
+      await myscrollController.animateTo(
+        scrollPosition,
+        duration: Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+      );
+
+      print('[ChatController] 📜 Scrolled to message: $messageId');
+    } catch (e) {
+      print('[ChatController] ❌ Failed to scroll to message: $e');
     }
   }
 
@@ -504,6 +731,10 @@ class ChatController extends GetxController {
     _verifyContactStatus(); // Enhanced with BlockingService
     _startBlockMonitoring(); // Real-time updates
 
+    // 🔥 VOICE MESSAGING SERVICE
+    _voiceService = Get.find<VoiceMessageService>();
+    print('[ChatController] ✅ Voice service initialized');
+
     clear_msg_num(doc_id);
   }
 
@@ -593,6 +824,12 @@ class ChatController extends GetxController {
     super.onClose();
     print("onClose-------");
     clear_msg_num(doc_id);
+
+    // 🔥 Cleanup voice recording if active
+    if (isRecordingVoice.value) {
+      _voiceService.cancelRecording();
+      print('[ChatController] 🎤 Cancelled active recording on close');
+    }
 
     // 🔥 Cleanup blocking resources
     _blockListener?.cancel();
