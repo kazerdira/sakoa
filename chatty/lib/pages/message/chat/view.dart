@@ -39,6 +39,7 @@ class ChatPage extends GetView<ChatController> {
             }
           },
           itemBuilder: (context) => [
+            // Show "Block" only if chat is NOT blocked
             if (!controller.isBlocked.value)
               PopupMenuItem(
                 value: 'block',
@@ -50,7 +51,9 @@ class ChatPage extends GetView<ChatController> {
                   ],
                 ),
               ),
-            if (controller.isBlocked.value)
+            // 🔥 Show "Unblock" ONLY if I'M the blocker (not if they blocked me)
+            if (controller.isBlocked.value &&
+                controller.blockStatus.value?.iBlocked == true)
               PopupMenuItem(
                 value: 'unblock',
                 child: Row(
@@ -178,32 +181,35 @@ class ChatPage extends GetView<ChatController> {
               ),
             ),
           ),
-          SizedBox(width: 10.w),
-          GestureDetector(
-            onTap: () => controller.unblockUserFromChat(),
-            child: Container(
-              padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 10.h),
-              decoration: BoxDecoration(
-                color: Colors.green,
-                borderRadius: BorderRadius.circular(20.w),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.green.withOpacity(0.3),
-                    blurRadius: 5,
-                    offset: Offset(0, 2),
+          // 🔥 Only show unblock button if I'M the blocker (not if they blocked me)
+          if (blockStatus != null && blockStatus.iBlocked) ...[
+            SizedBox(width: 10.w),
+            GestureDetector(
+              onTap: () => controller.unblockUserFromChat(),
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 10.h),
+                decoration: BoxDecoration(
+                  color: Colors.green,
+                  borderRadius: BorderRadius.circular(20.w),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.green.withOpacity(0.3),
+                      blurRadius: 5,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  'UNBLOCK',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.bold,
                   ),
-                ],
-              ),
-              child: Text(
-                'UNBLOCK',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12.sp,
-                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
