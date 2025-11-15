@@ -70,6 +70,9 @@ dependencies:
   
   # UI enhancements
   shimmer: ^3.0.0  # For skeleton loaders
+  
+  # Network connectivity monitoring
+  connectivity_plus: ^6.1.1  # For message delivery status tracking
 
   # 加密安全 SHA
   crypto: ^3.0.1

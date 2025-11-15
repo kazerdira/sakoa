@@ -10,6 +10,7 @@ import 'package:sakoa/common/services/chat_manager_service.dart';
 import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 Voice messaging
+import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/utils/utils.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -45,8 +46,12 @@ class Global {
     print('[Global] 🚀 Initializing VoiceMessageService...');
     await Get.putAsync(() => VoiceMessageService().init());
 
+    // 🔥 INDUSTRIAL-GRADE: Initialize Message Delivery Tracking Service
+    print('[Global] 🚀 Initializing MessageDeliveryService...');
+    await Get.putAsync(() => MessageDeliveryService().init());
+
     print(
-        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage)');
+        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage, MessageDelivery)');
   }
 
   static void setSystemUi() {

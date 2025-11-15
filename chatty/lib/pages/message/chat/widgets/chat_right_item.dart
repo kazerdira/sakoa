@@ -15,6 +15,67 @@ import 'package:sakoa/pages/message/chat/widgets/in_message_reply_bubble.dart';
 import 'package:sakoa/pages/message/chat/controller.dart';
 import 'package:flutter/services.dart';
 
+// 🔥 INDUSTRIAL-GRADE: Delivery status icon builder
+Widget _buildDeliveryStatusIcon(String? status) {
+  switch (status) {
+    case 'sending':
+      return SizedBox(
+        width: 12.w,
+        height: 12.w,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.5,
+          valueColor: AlwaysStoppedAnimation<Color>(
+            AppColors.primarySecondaryElementText.withOpacity(0.5),
+          ),
+        ),
+      );
+    case 'sent':
+      return Icon(
+        Icons.check,
+        size: 14.sp,
+        color: AppColors.primarySecondaryElementText.withOpacity(0.6),
+      );
+    case 'delivered':
+      return Icon(
+        Icons.done_all,
+        size: 14.sp,
+        color: AppColors.primarySecondaryElementText.withOpacity(0.6),
+      );
+    case 'read':
+      return Icon(
+        Icons.done_all,
+        size: 14.sp,
+        color: Colors.blue,
+      );
+    case 'failed':
+      return Icon(
+        Icons.error_outline,
+        size: 14.sp,
+        color: Colors.red,
+      );
+    default:
+      return SizedBox.shrink();
+  }
+}
+
+// 🔥 Format timestamp for delivery status
+String _formatTime(Timestamp? timestamp) {
+  if (timestamp == null) return "";
+  final date = timestamp.toDate();
+  final now = DateTime.now();
+  final difference = now.difference(date);
+
+  if (difference.inDays > 0) {
+    return "${date.day}/${date.month}";
+  } else if (difference.inHours > 0) {
+    return "${difference.inHours}h ago";
+  } else if (difference.inMinutes > 0) {
+    return "${difference.inMinutes}m ago";
+  } else {
+    return "Just now";
+  }
+}
+
 Widget RightRichTextContainer(String textContent) {
   const urlPattern =
       r"[(http(s)?):\/\/(www\.)?a-zA-Z0-9@:._\+-~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:_\+.~#?&\/\/=]*)";
@@ -198,17 +259,25 @@ Widget ChatRightItem(Msgcontent item) {
                     ],
                   ),
                 ),
+                // 🔥 INDUSTRIAL-GRADE: Timestamp + Delivery Status
                 Container(
                   margin: EdgeInsets.only(top: 10.h),
-                  child: Text(
-                    item.addtime == null
-                        ? ""
-                        : duTimeLineFormat(
-                            (item.addtime as Timestamp).toDate()),
-                    style: TextStyle(
-                      fontSize: 10.sp,
-                      color: AppColors.primarySecondaryElementText,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        item.addtime == null
+                            ? ""
+                            : duTimeLineFormat(
+                                (item.addtime as Timestamp).toDate()),
+                        style: TextStyle(
+                          fontSize: 10.sp,
+                          color: AppColors.primarySecondaryElementText,
+                        ),
+                      ),
+                      SizedBox(width: 4.w),
+                      _buildDeliveryStatusIcon(item.delivery_status),
+                    ],
                   ),
                 ),
               ],

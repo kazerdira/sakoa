@@ -23,6 +23,7 @@ import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/widgets/block_settings_dialog.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 NEW: Voice messaging
+import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
 
 class ChatController extends GetxController {
   ChatController();
@@ -51,6 +52,9 @@ class ChatController extends GetxController {
   final isReplyMode = false.obs;
   final isRecordingVoice = false.obs;
   final recordingCancelled = false.obs;
+
+  // 🔥 INDUSTRIAL-GRADE MESSAGE DELIVERY SERVICE
+  late final MessageDeliveryService _deliveryService;
 
   goMore() {
     state.more_status.value = state.more_status.value ? false : true;
@@ -138,45 +142,47 @@ class ChatController extends GetxController {
           isReplyMode.value ? replyingTo.value : null, // 🔥 Add reply if exists
     );
 
-    await db
-        .collection("message")
-        .doc(doc_id)
-        .collection("msglist")
-        .withConverter(
-          fromFirestore: Msgcontent.fromFirestore,
-          toFirestore: (Msgcontent msgcontent, options) =>
-              msgcontent.toFirestore(),
-        )
-        .add(content)
-        .then((DocumentReference doc) {
-      print('DocumentSnapshot added with ID: ${doc.id}');
+    // 🔥 INDUSTRIAL-GRADE: Send with delivery tracking
+    final result = await _deliveryService.sendMessageWithTracking(
+      chatDocId: doc_id,
+      content: content,
+    );
+
+    if (result.success || result.queued) {
+      print(
+          '[ChatController] ✅ Message sent: ${result.messageId} (queued: ${result.queued})');
       myinputController.clear();
-    });
-    var message_res = await db
-        .collection("message")
-        .doc(doc_id)
-        .withConverter(
-          fromFirestore: Msg.fromFirestore,
-          toFirestore: (Msg msg, options) => msg.toFirestore(),
-        )
-        .get();
-    if (message_res.data() != null) {
-      var item = message_res.data()!;
-      int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
-      int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
-      if (item.from_token == token) {
-        from_msg_num = from_msg_num + 1;
-      } else {
-        to_msg_num = to_msg_num + 1;
+
+      // Update chat metadata
+      var message_res = await db
+          .collection("message")
+          .doc(doc_id)
+          .withConverter(
+            fromFirestore: Msg.fromFirestore,
+            toFirestore: (Msg msg, options) => msg.toFirestore(),
+          )
+          .get();
+      if (message_res.data() != null) {
+        var item = message_res.data()!;
+        int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+        int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
+        if (item.from_token == token) {
+          from_msg_num = from_msg_num + 1;
+        } else {
+          to_msg_num = to_msg_num + 1;
+        }
+        await db.collection("message").doc(doc_id).update({
+          "to_msg_num": to_msg_num,
+          "from_msg_num": from_msg_num,
+          "last_msg": sendcontent,
+          "last_time": Timestamp.now()
+        });
       }
-      await db.collection("message").doc(doc_id).update({
-        "to_msg_num": to_msg_num,
-        "from_msg_num": from_msg_num,
-        "last_msg": sendcontent,
-        "last_time": Timestamp.now()
-      });
+      sendNotifications("text");
+    } else {
+      print('[ChatController] ❌ Message failed: ${result.error}');
+      toastInfo(msg: result.error ?? "Failed to send message");
     }
-    sendNotifications("text");
 
     // 🔥 CLEAR REPLY MODE after sending
     clearReplyMode();
@@ -199,45 +205,47 @@ class ChatController extends GetxController {
       addtime: Timestamp.now(),
     );
 
-    await db
-        .collection("message")
-        .doc(doc_id)
-        .collection("msglist")
-        .withConverter(
-          fromFirestore: Msgcontent.fromFirestore,
-          toFirestore: (Msgcontent msgcontent, options) =>
-              msgcontent.toFirestore(),
-        )
-        .add(content)
-        .then((DocumentReference doc) {
-      print('DocumentSnapshot added with ID: ${doc.id}');
-    });
-    var message_res = await db
-        .collection("message")
-        .doc(doc_id)
-        .withConverter(
-          fromFirestore: Msg.fromFirestore,
-          toFirestore: (Msg msg, options) => msg.toFirestore(),
-        )
-        .get();
-    if (message_res.data() != null) {
-      var item = message_res.data()!;
-      int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
-      int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
-      if (item.from_token == token) {
-        from_msg_num = from_msg_num + 1;
-      } else {
-        to_msg_num = to_msg_num + 1;
-      }
-      await db.collection("message").doc(doc_id).update({
-        "to_msg_num": to_msg_num,
-        "from_msg_num": from_msg_num,
-        "last_msg": "【image】",
-        "last_time": Timestamp.now()
-      });
-    }
+    // 🔥 INDUSTRIAL-GRADE: Send with delivery tracking
+    final result = await _deliveryService.sendMessageWithTracking(
+      chatDocId: doc_id,
+      content: content,
+    );
 
-    sendNotifications("text");
+    if (result.success || result.queued) {
+      print(
+          '[ChatController] ✅ Image sent: ${result.messageId} (queued: ${result.queued})');
+
+      // Update chat metadata
+      var message_res = await db
+          .collection("message")
+          .doc(doc_id)
+          .withConverter(
+            fromFirestore: Msg.fromFirestore,
+            toFirestore: (Msg msg, options) => msg.toFirestore(),
+          )
+          .get();
+      if (message_res.data() != null) {
+        var item = message_res.data()!;
+        int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+        int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
+        if (item.from_token == token) {
+          from_msg_num = from_msg_num + 1;
+        } else {
+          to_msg_num = to_msg_num + 1;
+        }
+        await db.collection("message").doc(doc_id).update({
+          "to_msg_num": to_msg_num,
+          "from_msg_num": from_msg_num,
+          "last_msg": "【image】",
+          "last_time": Timestamp.now()
+        });
+      }
+
+      sendNotifications("text");
+    } else {
+      print('[ChatController] ❌ Image failed: ${result.error}');
+      toastInfo(msg: result.error ?? "Failed to send image");
+    }
   }
 
   sendNotifications(String call_type) async {
@@ -352,54 +360,54 @@ class ChatController extends GetxController {
             : null, // 🔥 Add reply if exists
       );
 
-      // Save to Firestore
-      await db
-          .collection("message")
-          .doc(doc_id)
-          .collection("msglist")
-          .withConverter(
-            fromFirestore: Msgcontent.fromFirestore,
-            toFirestore: (Msgcontent msgcontent, options) =>
-                msgcontent.toFirestore(),
-          )
-          .add(content);
+      // 🔥 INDUSTRIAL-GRADE: Send with delivery tracking
+      final result = await _deliveryService.sendMessageWithTracking(
+        chatDocId: doc_id,
+        content: content,
+      );
 
-      // Update chat metadata
-      var message_res = await db
-          .collection("message")
-          .doc(doc_id)
-          .withConverter(
-            fromFirestore: Msg.fromFirestore,
-            toFirestore: (Msg msg, options) => msg.toFirestore(),
-          )
-          .get();
+      if (result.success || result.queued) {
+        print(
+            '[ChatController] ✅ Voice message sent: ${result.messageId} (queued: ${result.queued})');
 
-      if (message_res.data() != null) {
-        var item = message_res.data()!;
-        int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
-        int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
+        // Update chat metadata
+        var message_res = await db
+            .collection("message")
+            .doc(doc_id)
+            .withConverter(
+              fromFirestore: Msg.fromFirestore,
+              toFirestore: (Msg msg, options) => msg.toFirestore(),
+            )
+            .get();
 
-        if (item.from_token == token) {
-          from_msg_num = from_msg_num + 1;
-        } else {
-          to_msg_num = to_msg_num + 1;
+        if (message_res.data() != null) {
+          var item = message_res.data()!;
+          int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
+          int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
+
+          if (item.from_token == token) {
+            from_msg_num = from_msg_num + 1;
+          } else {
+            to_msg_num = to_msg_num + 1;
+          }
+
+          await db.collection("message").doc(doc_id).update({
+            "to_msg_num": to_msg_num,
+            "from_msg_num": from_msg_num,
+            "last_msg": "🎤 Voice message",
+            "last_time": Timestamp.now()
+          });
         }
 
-        await db.collection("message").doc(doc_id).update({
-          "to_msg_num": to_msg_num,
-          "from_msg_num": from_msg_num,
-          "last_msg": "🎤 Voice message",
-          "last_time": Timestamp.now()
-        });
+        // Send notification
+        sendNotifications("voice");
+
+        // Clear reply mode
+        clearReplyMode();
+      } else {
+        print('[ChatController] ❌ Voice message failed: ${result.error}');
+        throw Exception(result.error ?? "Failed to send voice message");
       }
-
-      // Send notification
-      sendNotifications("voice");
-
-      // Clear reply mode
-      clearReplyMode();
-
-      print('[ChatController] ✅ Voice message saved to Firestore');
     } catch (e, stackTrace) {
       print('[ChatController] ❌ Failed to save voice message: $e');
       print('[ChatController] Stack trace: $stackTrace');
@@ -735,6 +743,10 @@ class ChatController extends GetxController {
     _voiceService = Get.find<VoiceMessageService>();
     print('[ChatController] ✅ Voice service initialized');
 
+    // 🔥 INDUSTRIAL-GRADE DELIVERY TRACKING
+    _deliveryService = Get.find<MessageDeliveryService>();
+    print('[ChatController] ✅ Delivery tracking service initialized');
+
     clear_msg_num(doc_id);
   }
 
@@ -774,13 +786,36 @@ class ChatController extends GetxController {
                     print("⛔ Blocked incoming message from ${msg.token}");
                     continue; // Skip this message
                   }
+
+                  // 🔥 INDUSTRIAL-GRADE: Mark incoming message as delivered & read
+                  if (msg.id != null && msg.delivery_status == 'sent') {
+                    _deliveryService.updateDeliveryStatus(
+                      chatDocId: doc_id,
+                      messageId: msg.id!,
+                      status:
+                          'read', // Mark as read immediately when chat is open
+                    );
+                  }
                 }
 
                 tempMsgList.add(msg);
               }
               break;
             case DocumentChangeType.modified:
-              print("Modified City: ${change.doc.data()}");
+              print("Modified Message: ${change.doc.data()}");
+              // 🔥 INDUSTRIAL-GRADE: Handle delivery status updates
+              if (change.doc.data() != null) {
+                final updatedMsg = change.doc.data()!;
+                // Find and update the message in the list
+                final index = state.msgcontentList
+                    .indexWhere((msg) => msg.id == updatedMsg.id);
+                if (index != -1) {
+                  state.msgcontentList[index] = updatedMsg;
+                  state.msgcontentList.refresh();
+                  print(
+                      '[ChatController] ✅ Updated message status: ${updatedMsg.id} -> ${updatedMsg.delivery_status}');
+                }
+              }
               break;
             case DocumentChangeType.removed:
               print("Removed City: ${change.doc.data()}");
