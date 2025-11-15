@@ -9,11 +9,14 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
 // 🔥 Voice & Reply imports
 import 'package:sakoa/pages/message/chat/widgets/voice_message_player.dart';
 import 'package:sakoa/pages/message/chat/widgets/in_message_reply_bubble.dart';
 import 'package:sakoa/pages/message/chat/controller.dart';
 import 'package:flutter/services.dart';
+// 🔥 V2: Message delivery service for timestamp grouping
+import 'package:sakoa/common/services/message_delivery_service.dart';
 
 // 🔥 INDUSTRIAL-GRADE: Delivery status icon builder
 Widget _buildDeliveryStatusIcon(String? status) {
@@ -74,6 +77,85 @@ String _formatTime(Timestamp? timestamp) {
   } else {
     return "Just now";
   }
+}
+
+// 🔥 V2: Telegram-style timestamp separator
+Widget _buildTimestampSeparator(DateTime messageTime) {
+  return Container(
+    margin: EdgeInsets.symmetric(vertical: 10.h),
+    alignment: Alignment.center,
+    child: Container(
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+      decoration: BoxDecoration(
+        color: AppColors.primarySecondaryElementText.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12.w),
+      ),
+      child: Text(
+        formatDateSeparator(messageTime),
+        style: TextStyle(
+          fontSize: 11.sp,
+          color: AppColors.primarySecondaryElementText.withOpacity(0.7),
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    ),
+  );
+}
+
+// 🔥 V2: Message timeline details overlay (double-tap to show)
+Widget _buildMessageDetails(Msgcontent item) {
+  final sentTime = item.sent_at != null
+      ? DateFormat('HH:mm:ss').format((item.sent_at as Timestamp).toDate())
+      : (item.addtime != null
+          ? DateFormat('HH:mm:ss').format((item.addtime as Timestamp).toDate())
+          : 'N/A');
+  final deliveredTime = item.delivered_at != null
+      ? DateFormat('HH:mm:ss').format((item.delivered_at as Timestamp).toDate())
+      : 'Not delivered';
+  final readTime = item.read_at != null
+      ? DateFormat('HH:mm:ss').format((item.read_at as Timestamp).toDate())
+      : 'Not read';
+
+  return Container(
+    margin: EdgeInsets.only(top: 8.h, right: 20.w),
+    padding: EdgeInsets.all(10.w),
+    decoration: BoxDecoration(
+      color: Colors.black.withOpacity(0.7),
+      borderRadius: BorderRadius.circular(8.w),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '✓ Sent: $sentTime',
+          style: TextStyle(
+            fontSize: 11.sp,
+            color: Colors.white,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+        SizedBox(height: 4.h),
+        Text(
+          '✓✓ Delivered: $deliveredTime',
+          style: TextStyle(
+            fontSize: 11.sp,
+            color: Colors.white,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+        SizedBox(height: 4.h),
+        Text(
+          '👁 Read: $readTime',
+          style: TextStyle(
+            fontSize: 11.sp,
+            color: Colors.blue.shade300,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 Widget RightRichTextContainer(String textContent) {
@@ -180,117 +262,229 @@ void _showMessageOptions(BuildContext context, Msgcontent item) {
   );
 }
 
+// 🔥 V2: Stateful wrapper for double-tap timeline details
+class _ChatRightItemState extends State<_ChatRightItemWidget> {
+  bool _showDetails = false;
+
+  void _toggleDetails() {
+    setState(() {
+      _showDetails = !_showDetails;
+    });
+
+    // Auto-hide after 5 seconds
+    if (_showDetails) {
+      Future.delayed(Duration(seconds: 5), () {
+        if (mounted && _showDetails) {
+          setState(() {
+            _showDetails = false;
+          });
+        }
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _buildChatRightItem(
+      widget.item,
+      isLastMessage: widget.isLastMessage,
+      previousMessage: widget.previousMessage,
+      showDetails: _showDetails,
+      onToggleDetails: _toggleDetails,
+    );
+  }
+}
+
+class _ChatRightItemWidget extends StatefulWidget {
+  final Msgcontent item;
+  final bool isLastMessage;
+  final Msgcontent? previousMessage;
+
+  const _ChatRightItemWidget(
+    this.item, {
+    this.isLastMessage = false,
+    this.previousMessage,
+  });
+
+  @override
+  _ChatRightItemState createState() => _ChatRightItemState();
+}
+
 Widget ChatRightItem(
   Msgcontent item, {
   bool isLastMessage = false,
   Msgcontent? previousMessage,
 }) {
-  return GestureDetector(
-    onLongPress: () {
-      final context = Get.context;
-      if (context != null) {
-        _showMessageOptions(context, item);
-      }
-    },
-    child: Container(
-      padding:
-          EdgeInsets.only(top: 10.w, left: 20.w, right: 20.w, bottom: 10.w),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 250.w,
-              minHeight: 40.w,
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  margin: EdgeInsets.only(right: 0.w, top: 0.w),
-                  padding: EdgeInsets.only(
-                    top: 10.w,
-                    bottom: 10.w,
-                    left: 10.w,
-                    right: 10.w,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryElement,
-                    borderRadius: BorderRadius.all(Radius.circular(5.w)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      // 🔥 Reply bubble (if this message is a reply)
-                      if (item.reply != null)
-                        GestureDetector(
-                          onTap: () {
-                            final controller = Get.find<ChatController>();
-                            controller
-                                .scrollToMessage(item.reply!.originalMessageId);
-                          },
-                          child: InMessageReplyBubble(
-                            reply: item.reply!,
-                            isMyMessage: true,
-                          ),
-                        ),
-                      if (item.reply != null) SizedBox(height: 8.h),
+  return _ChatRightItemWidget(
+    item,
+    isLastMessage: isLastMessage,
+    previousMessage: previousMessage,
+  );
+}
 
-                      // 🔥 Message content (text, image, or voice)
-                      if (item.type == "text")
-                        RightRichTextContainer("${item.content}")
-                      else if (item.type == "voice")
-                        VoiceMessagePlayer(
-                          messageId: item.id ?? '',
-                          audioUrl: item.content ?? '',
-                          durationSeconds: item.voice_duration ?? 0,
-                          isMyMessage: true,
-                        )
-                      else // Image
-                        ConstrainedBox(
-                          constraints: BoxConstraints(maxWidth: 90.w),
-                          child: GestureDetector(
-                            child:
-                                CachedNetworkImage(imageUrl: "${item.content}"),
-                            onTap: () {
-                              Get.toNamed(AppRoutes.Photoimgview,
-                                  parameters: {"url": item.content ?? ""});
-                            },
-                          ),
-                        ),
-                    ],
-                  ),
+Widget _buildChatRightItem(
+  Msgcontent item, {
+  bool isLastMessage = false,
+  Msgcontent? previousMessage,
+  bool showDetails = false,
+  VoidCallback? onToggleDetails,
+}) {
+  // 🔥 V2: Check if we should show timestamp separator
+  final messageDeliveryService = Get.find<MessageDeliveryService>();
+  final showTimestamp = messageDeliveryService.shouldShowTimestamp(
+    item,
+    previousMessage,
+  );
+  final messageTime = item.addtime != null
+      ? (item.addtime as Timestamp).toDate()
+      : DateTime.now();
+
+  // 🔥 V2: Message grouping logic (Telegram-style)
+  bool shouldGroupWithPrevious = false;
+  if (previousMessage != null &&
+      previousMessage.addtime != null &&
+      item.addtime != null) {
+    final prevTime = (previousMessage.addtime as Timestamp).toDate();
+    final currTime = (item.addtime as Timestamp).toDate();
+    final timeDiff = currTime.difference(prevTime).inMinutes;
+
+    // Group if: same sender (both sent by me) AND within 2 minutes
+    final sameSender = previousMessage.token != null &&
+        item.token != null; // Both are sent messages
+    shouldGroupWithPrevious = sameSender && timeDiff < 2;
+  }
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // 🔥 V2: Timestamp separator (appears when messages are 5+ minutes apart)
+      if (showTimestamp) _buildTimestampSeparator(messageTime),
+
+      // Original message bubble
+      GestureDetector(
+        onLongPress: () {
+          final context = Get.context;
+          if (context != null) {
+            _showMessageOptions(context, item);
+          }
+        },
+        // 🔥 V2: Double-tap to show delivery timeline details
+        onDoubleTap: onToggleDetails,
+        child: Container(
+          // 🔥 V2: Smart padding - tight for grouped, normal for ungrouped
+          padding: EdgeInsets.only(
+            top: shouldGroupWithPrevious ? 2.h : 10.w,
+            left: 20.w,
+            right: 20.w,
+            bottom: 10.w,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 250.w,
+                  minHeight: 40.w,
                 ),
-                // 🔥 INDUSTRIAL-GRADE: Timestamp + Delivery Status
-                Container(
-                  margin: EdgeInsets.only(top: 10.h),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        item.addtime == null
-                            ? ""
-                            : duTimeLineFormat(
-                                (item.addtime as Timestamp).toDate()),
-                        style: TextStyle(
-                          fontSize: 10.sp,
-                          color: AppColors.primarySecondaryElementText,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Container(
+                      margin: EdgeInsets.only(right: 0.w, top: 0.w),
+                      padding: EdgeInsets.only(
+                        top: 10.w,
+                        bottom: 10.w,
+                        left: 10.w,
+                        right: 10.w,
+                      ),
+                      // 🔥 V2: Smart bubble grouping with Telegram-style corners
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryElement,
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.circular(18.w),
+                          topRight: Radius.circular(
+                              shouldGroupWithPrevious ? 4.w : 18.w),
+                          bottomLeft: Radius.circular(18.w),
+                          bottomRight: Radius.circular(18.w),
                         ),
                       ),
-                      SizedBox(width: 4.w),
-                      // 🔥 V2: Show delivery status ONLY for last message
-                      if (isLastMessage)
-                        _buildDeliveryStatusIcon(item.delivery_status),
-                    ],
-                  ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          // 🔥 Reply bubble (if this message is a reply)
+                          if (item.reply != null)
+                            GestureDetector(
+                              onTap: () {
+                                final controller = Get.find<ChatController>();
+                                controller.scrollToMessage(
+                                    item.reply!.originalMessageId);
+                              },
+                              child: InMessageReplyBubble(
+                                reply: item.reply!,
+                                isMyMessage: true,
+                              ),
+                            ),
+                          if (item.reply != null) SizedBox(height: 8.h),
+
+                          // 🔥 Message content (text, image, or voice)
+                          if (item.type == "text")
+                            RightRichTextContainer("${item.content}")
+                          else if (item.type == "voice")
+                            VoiceMessagePlayer(
+                              messageId: item.id ?? '',
+                              audioUrl: item.content ?? '',
+                              durationSeconds: item.voice_duration ?? 0,
+                              isMyMessage: true,
+                            )
+                          else // Image
+                            ConstrainedBox(
+                              constraints: BoxConstraints(maxWidth: 90.w),
+                              child: GestureDetector(
+                                child: CachedNetworkImage(
+                                    imageUrl: "${item.content}"),
+                                onTap: () {
+                                  Get.toNamed(AppRoutes.Photoimgview,
+                                      parameters: {"url": item.content ?? ""});
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    // 🔥 INDUSTRIAL-GRADE: Timestamp + Delivery Status
+                    Container(
+                      margin: EdgeInsets.only(top: 10.h),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            item.addtime == null
+                                ? ""
+                                : duTimeLineFormat(
+                                    (item.addtime as Timestamp).toDate()),
+                            style: TextStyle(
+                              fontSize: 10.sp,
+                              color: AppColors.primarySecondaryElementText,
+                            ),
+                          ),
+                          SizedBox(width: 4.w),
+                          // 🔥 V2: Show delivery status ONLY for last message
+                          if (isLastMessage)
+                            _buildDeliveryStatusIcon(item.delivery_status),
+                        ],
+                      ),
+                    ),
+                    // 🔥 V2: Show delivery timeline details on double-tap
+                    if (showDetails) _buildMessageDetails(item),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      ), // Close GestureDetector
+    ], // Close Column children
+  ); // Close Column
 }

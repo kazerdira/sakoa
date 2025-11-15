@@ -50,7 +50,10 @@ class ChatList extends GetView<ChatController> {
                         messageId: item.id ?? '',
                         chatDocId: controller.doc_id,
                         isMyMessage: false,
-                        child: ChatLeftItem(item),
+                        child: ChatLeftItem(
+                          item,
+                          previousMessage: previousItem,
+                        ),
                       );
                     },
                     childCount: controller.state.msgcontentList.length,
