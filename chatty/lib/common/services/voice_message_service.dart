@@ -367,6 +367,16 @@ class VoiceMessageService extends GetxService {
     }
   }
 
+  /// Set playback speed (1x, 1.5x, 2x, etc.)
+  Future<void> setPlaybackSpeed(double speed) async {
+    try {
+      await _player.setSpeed(speed);
+      print('[VoiceMessageService] ⚡ Playback speed set to ${speed}x');
+    } catch (e) {
+      print('[VoiceMessageService] ❌ Failed to set playback speed: $e');
+    }
+  }
+
   // ============ HELPER METHODS ============
 
   void _startDurationTimer() {
