@@ -11,6 +11,8 @@ import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 Voice messaging
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
+import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🔥 SUPERNOVA: Voice caching
+import 'package:sakoa/common/services/audio_waveform_analyzer.dart'; // 🔥 SUPERNOVA: Waveform analysis
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/utils/utils.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -46,16 +48,20 @@ class Global {
     print('[Global] 🚀 Initializing VoiceMessageService...');
     await Get.putAsync(() => VoiceMessageService().init());
 
-    // 🔥 SUPERNOVA: Initialize Voice Message Cache Service (Simpler & Better)
-    print('[Global] 🚀 Initializing VoiceMessageCacheService...');
-    await Get.putAsync(() => VoiceMessageCacheService().init());
-
     // 🔥 INDUSTRIAL-GRADE: Initialize Message Delivery Tracking Service
     print('[Global] 🚀 Initializing MessageDeliveryService...');
     await Get.putAsync(() => MessageDeliveryService().init());
 
+    // 🔥 SUPERNOVA-LEVEL: Initialize Voice Cache Manager
+    print('[Global] 🚀 Initializing VoiceCacheManager...');
+    await Get.putAsync(() => VoiceCacheManager().init());
+
+    // 🔥 SUPERNOVA-LEVEL: Initialize Audio Waveform Analyzer
+    print('[Global] 🚀 Initializing AudioWaveformAnalyzer...');
+    await Get.putAsync(() => AudioWaveformAnalyzer().init());
+
     print(
-        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage, MessageDelivery)');
+        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage, MessageDelivery, VoiceCache, WaveformAnalyzer)');
   }
 
   static void setSystemUi() {

@@ -33,6 +33,9 @@ class VoiceMessageService extends GetxService {
   final playbackDuration =
       <String, Duration>{}.obs; // messageId -> total duration
 
+  // 🔥 FIX: Track currently loaded message to avoid reloading
+  String? _currentLoadedMessageId;
+
   // Upload state
   final uploadProgress = 0.0.obs;
   final isUploading = false.obs;
@@ -288,8 +291,40 @@ class VoiceMessageService extends GetxService {
       if (state.processingState == ProcessingState.completed) {
         final currentMessageId = _getCurrentPlayingMessageId();
         if (currentMessageId != null) {
-          isPlaying[currentMessageId] = false;
-          playbackPosition[currentMessageId] = Duration.zero;
+          print(
+              '[Service] 🔔 ProcessingState.completed detected for: $currentMessageId');
+          print(
+              '[Service] 🔔 Current isPlaying state: ${isPlaying[currentMessageId]}');
+
+          // 🔥 SUPER CRITICAL: Don't clear if user explicitly paused!
+          if (isPlaying[currentMessageId] == false) {
+            print(
+                '[Service] ⏸️ User paused - IGNORING ProcessingState.completed');
+            return;
+          }
+
+          // 🔥 CRITICAL FIX: Only clear loaded message if audio actually finished
+          // Don't clear if user just paused - use REAL-TIME position from player
+          final realTimePosition = _player.position;
+          final totalDuration = _player.duration ?? Duration.zero;
+
+          // Only clear if we're truly at the end (completed naturally)
+          if (realTimePosition >= totalDuration - Duration(milliseconds: 500)) {
+            print(
+                '[Service] 🏁 Audio completed naturally, clearing loaded message');
+            print(
+                '[Service] 📍 Real position: $realTimePosition / $totalDuration');
+            isPlaying[currentMessageId] = false;
+            playbackPosition[currentMessageId] = Duration.zero;
+            _currentLoadedMessageId = null;
+          } else {
+            print(
+                '[Service] ⏸️ ProcessingState.completed but not at end - keeping loaded message');
+            print(
+                '[Service] 📍 Real position: $realTimePosition / $totalDuration');
+            print(
+                '[Service] 📍 Cached position: ${playbackPosition[currentMessageId]}');
+          }
         }
       }
     });
@@ -302,35 +337,101 @@ class VoiceMessageService extends GetxService {
     });
   }
 
-  /// Play voice message
+  /// ⚡ EXOPLAYER-STYLE: Separate play method (professional pattern!)
   Future<void> playVoiceMessage(String messageId, String audioUrl) async {
     try {
-      // If already playing this message, pause it
-      if (isPlaying[messageId] == true) {
-        await _player.pause();
-        isPlaying[messageId] = false;
-        print('[VoiceMessageService] ⏸️ Paused: $messageId');
-        return;
-      }
+      print('\n═══════════════════════════════════════════════════════════');
+      print('[PLAY] 🎯 START - messageId: $messageId');
+      print('[PLAY] 📍 _currentLoadedMessageId: $_currentLoadedMessageId');
+      print('[PLAY] 📍 Current AudioPlayer position: ${_player.position}');
+      print('[PLAY] 📍 Saved position in map: ${playbackPosition[messageId]}');
 
-      // Stop any currently playing message
+      // 🔥 CRITICAL FIX: Stop ALL other messages first (multi-message support)
       final currentPlaying = _getCurrentPlayingMessageId();
       if (currentPlaying != null && currentPlaying != messageId) {
-        isPlaying[currentPlaying] = false;
+        print('[PLAY] 🛑 Stopping other message: $currentPlaying');
+
+        // Stop the audio player first
+        await _player.pause();
+
+        // Clear all other playing states
+        final allPlayingMessages = isPlaying.entries
+            .where((entry) => entry.value == true && entry.key != messageId)
+            .map((entry) => entry.key)
+            .toList();
+
+        for (final msg in allPlayingMessages) {
+          isPlaying[msg] = false;
+          print('[PLAY] 🛑 Cleared playing state for: $msg');
+        }
+
+        // Force GetX update
+        isPlaying.refresh();
       }
 
-      // Load and play new message
-      await _player.setUrl(audioUrl);
-      final duration = _player.duration;
-      if (duration != null) {
-        playbackDuration[messageId] = duration;
+      // 🔥 EXOPLAYER PATTERN: Only load audio if it's a DIFFERENT message
+      if (_currentLoadedMessageId != messageId) {
+        print('[PLAY] 🔄 LOADING NEW AUDIO (different message)');
+        print(
+            '[PLAY] � Audio URL: ${audioUrl.substring(0, audioUrl.length > 50 ? 50 : audioUrl.length)}...');
+
+        // 🎯 PROFESSIONAL FIX: Use setAudioSource() with initialPosition (atomic!)
+        final audioUri =
+            audioUrl.startsWith('/') || audioUrl.startsWith('file://')
+                ? Uri.file(audioUrl.replaceFirst('file://', ''))
+                : Uri.parse(audioUrl);
+
+        print('[PLAY] 🎯 setAudioSource() with initialPosition: Duration.zero');
+        await _player.setAudioSource(
+          AudioSource.uri(audioUri),
+          initialPosition:
+              Duration.zero, // Start from beginning for NEW message
+        );
+        print('[PLAY] ⚡ Audio loaded with position set ATOMICALLY');
+
+        final duration = _player.duration;
+        if (duration != null) {
+          playbackDuration[messageId] = duration;
+          print('[PLAY] ⏱️ Duration: $duration');
+        }
+
+        _currentLoadedMessageId = messageId;
+        playbackPosition[messageId] = Duration.zero; // Reset for NEW message
+        print('[PLAY] 🔄 Set _currentLoadedMessageId = $messageId');
+        print('[PLAY] 🔄 Reset position to 0:00 for new message');
+      } else {
+        print('[PLAY] ✅ RESUMING - Same message, using saved position');
+        final savedPosition = playbackPosition[messageId] ?? Duration.zero;
+        print('[PLAY] � Saved position: $savedPosition');
+
+        // 🎯 PROFESSIONAL FIX: Reload audio with saved position ATOMICALLY!
+        final audioUri =
+            audioUrl.startsWith('/') || audioUrl.startsWith('file://')
+                ? Uri.file(audioUrl.replaceFirst('file://', ''))
+                : Uri.parse(audioUrl);
+
+        print(
+            '[PLAY] 🎯 setAudioSource() with initialPosition: $savedPosition (RESUME!)');
+        await _player.setAudioSource(
+          AudioSource.uri(audioUri),
+          initialPosition:
+              savedPosition, // ← THE MAGIC! Position set atomically
+        );
+        print('[PLAY] ⚡ Audio reloaded with saved position set ATOMICALLY');
+        print('[PLAY] 📍 Position after atomic load: ${_player.position}');
       }
 
+      print('[PLAY] 🎬 Calling _player.play()...');
       await _player.play();
+      print('[PLAY] 🎬 _player.play() completed');
+      print('[PLAY] 📍 Position after play(): ${_player.position}');
+
       isPlaying[messageId] = true;
-      print('[VoiceMessageService] ▶️ Playing: $messageId');
+      print('[PLAY] ✅ State updated: isPlaying[$messageId] = true');
+      print('[PLAY] ✅ NOW PLAYING: $messageId');
+      print('═══════════════════════════════════════════════════════════\n');
     } catch (e, stackTrace) {
-      print('[VoiceMessageService] ❌ Playback failed: $e');
+      print('[VoiceMessageService] ❌ Play failed: $e');
       print('[VoiceMessageService] Stack trace: $stackTrace');
       isPlaying[messageId] = false;
 
@@ -345,12 +446,57 @@ class VoiceMessageService extends GetxService {
     }
   }
 
-  /// Stop playback
+  /// ⏸️ EXOPLAYER-STYLE: Separate pause method (professional pattern!)
+  Future<void> pauseVoiceMessage(String messageId) async {
+    try {
+      print('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('[PAUSE] ⏸️ START - messageId: $messageId');
+      print('[PAUSE] 📍 _currentLoadedMessageId: $_currentLoadedMessageId');
+      print('[PAUSE] 📍 isPlaying[$messageId]: ${isPlaying[messageId]}');
+
+      if (isPlaying[messageId] != true) {
+        print('[PAUSE] ⚠️ Message not playing, ignoring pause request');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        return;
+      }
+
+      print(
+          '[PAUSE] 📍 AudioPlayer position BEFORE pause: ${_player.position}');
+
+      // 🔥 EXOPLAYER PATTERN: Save position BEFORE pausing
+      final currentPosition = _player.position;
+      print('[PAUSE] 💾 Current position captured: $currentPosition');
+
+      print('[PAUSE] ⏸️ Calling _player.pause()...');
+      await _player.pause(); // KEEPS AUDIO LOADED, KEEPS POSITION!
+      print('[PAUSE] ⏸️ _player.pause() completed');
+
+      print('[PAUSE] 📍 AudioPlayer position AFTER pause: ${_player.position}');
+
+      // Save position for resume
+      playbackPosition[messageId] = currentPosition;
+      print('[PAUSE] 💾 SAVED position to map: ${playbackPosition[messageId]}');
+
+      isPlaying[messageId] = false;
+      print('[PAUSE] ✅ State updated: isPlaying[$messageId] = false');
+      print(
+          '[PAUSE] ✅ PAUSED - Audio remains loaded at: ${playbackPosition[messageId]}');
+      print(
+          '[PAUSE] ℹ️ _currentLoadedMessageId still: $_currentLoadedMessageId');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    } catch (e, stackTrace) {
+      print('[PAUSE] ❌ Pause failed: $e');
+      print('[PAUSE] ❌ Stack trace: $stackTrace');
+    }
+  }
+
+  /// Stop playback (clears loaded audio)
   Future<void> stopPlayback(String messageId) async {
     try {
       await _player.stop();
       isPlaying[messageId] = false;
       playbackPosition[messageId] = Duration.zero;
+      _currentLoadedMessageId = null; // 🔥 FIX: Clear loaded message on stop
       print('[VoiceMessageService] ⏹️ Stopped: $messageId');
     } catch (e) {
       print('[VoiceMessageService] ❌ Failed to stop playback: $e');
