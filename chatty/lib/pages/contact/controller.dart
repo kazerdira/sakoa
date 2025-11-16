@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:sakoa/common/apis/apis.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
@@ -68,12 +66,55 @@ class ContactController extends GetxController {
 
   /// 🔥 SMART: Listen to stale offline users (timeout detection)
   void _setupStaleOfflineListener() {
-    // Use ever() to watch for changes in stale offline map
+    // 🔥 FIX: Watch presence for ALL contacts first!
+    // PresenceService only watches users that we explicitly ask for
+    print(
+        '[ContactController] 🔍 Starting presence watch for ${state.acceptedContacts.length} contacts');
+    for (var contact in state.acceptedContacts) {
+      final token = contact.contact_token;
+      if (token != null && token.isNotEmpty) {
+        // Start watching this contact's presence
+        PresenceService.to.watchPresence(token).listen((presenceData) {
+          // Update contact online status when presence changes
+          _updateContactOnlineStatus(token, presenceData.online);
+        });
+        print('[ContactController] 👀 Watching presence for $token');
+      }
+    }
+
+    // 🔥 IMPORTANT: Check for EXISTING stale users first!
+    // The ever() only fires on CHANGES, so we need to process existing stale users
+    final existingStaleUsers = PresenceService.to.staleOfflineUsers;
+    print(
+        '[ContactController] 🔍 Checking staleOfflineUsers: ${existingStaleUsers.length} entries');
+
+    if (existingStaleUsers.isNotEmpty) {
+      print(
+          '[ContactController] 🔥 Found ${existingStaleUsers.length} EXISTING stale users at startup!');
+      existingStaleUsers.forEach((token, isStale) {
+        if (isStale) {
+          print(
+              '[ContactController] 🔥 Processing existing stale user: $token');
+          _updateContactOnlineStatus(token, 0);
+        }
+      });
+    } else {
+      print(
+          '[ContactController] ℹ️ No existing stale users found (map is empty)');
+    }
+
+    // Use ever() to watch for FUTURE changes in stale offline map
     ever(PresenceService.to.staleOfflineUsers, (Map<String, bool> staleMap) {
+      print(
+          '[ContactController] 🔔 Stale offline map changed: ${staleMap.length} entries');
       // Update contacts list when users go offline due to stale heartbeat
       staleMap.forEach((token, isStale) {
+        print(
+            '[ContactController] 🔍 Processing token: $token, isStale: $isStale');
         if (isStale) {
           // This user's heartbeat is stale → Mark as offline in UI
+          print(
+              '[ContactController] 🔥 Calling _updateContactOnlineStatus for $token');
           _updateContactOnlineStatus(token, 0);
         }
       });
@@ -83,20 +124,54 @@ class ContactController extends GetxController {
 
   /// Helper to update a contact's online status
   void _updateContactOnlineStatus(String token, int status) {
+    print(
+        '[ContactController] 🔍 _updateContactOnlineStatus called: token=$token, status=$status');
+    print(
+        '[ContactController] 📋 acceptedContacts.length: ${state.acceptedContacts.length}');
+
     // Update cached profile
     if (state.profileCache.containsKey(token)) {
       state.profileCache[token]?.online = status;
+      print('[ContactController] ✅ Updated profileCache for $token');
     }
 
-    // Update contacts list
+    // Update contacts list - MUST replace entire object for GetX reactivity
+    bool found = false;
     for (int i = 0; i < state.acceptedContacts.length; i++) {
+      print(
+          '[ContactController] 🔎 Checking contact[$i]: ${state.acceptedContacts[i].contact_token} vs $token');
       if (state.acceptedContacts[i].contact_token == token) {
-        state.acceptedContacts[i].contact_online = status;
+        found = true;
+        // Create a new contact object with updated online status
+        final updatedContact = ContactEntity(
+          id: state.acceptedContacts[i].id,
+          user_token: state.acceptedContacts[i].user_token,
+          user_name: state.acceptedContacts[i].user_name,
+          user_avatar: state.acceptedContacts[i].user_avatar,
+          user_online: state.acceptedContacts[i].user_online,
+          contact_token: state.acceptedContacts[i].contact_token,
+          contact_name: state.acceptedContacts[i].contact_name,
+          contact_avatar: state.acceptedContacts[i].contact_avatar,
+          contact_online: status, // 🔥 Updated status
+          status: state.acceptedContacts[i].status,
+          requested_by: state.acceptedContacts[i].requested_by,
+          requested_at: state.acceptedContacts[i].requested_at,
+          accepted_at: state.acceptedContacts[i].accepted_at,
+          blocked_at: state.acceptedContacts[i].blocked_at,
+        );
+
+        // Replace the entire object to trigger GetX reactivity
+        state.acceptedContacts[i] = updatedContact;
         state.acceptedContacts.refresh(); // Trigger UI update
         print(
             '[ContactController] 🔍 Updated $token to ${status == 1 ? "online" : "offline"} (stale heartbeat)');
         break;
       }
+    }
+
+    if (!found) {
+      print(
+          '[ContactController] ❌ Contact not found in acceptedContacts: $token');
     }
   }
 
@@ -327,6 +402,9 @@ class ContactController extends GetxController {
     bool refresh = false,
     bool loadMore = false,
   }) async {
+    print(
+        "[ContactController] 🔍 loadAcceptedContacts called: refresh=$refresh, loadMore=$loadMore, myToken=$token");
+
     // Prevent duplicate loading
     if (state.isLoadingContacts.value) {
       print("[ContactController] ⏸️ Already loading contacts, skipping...");
@@ -387,6 +465,8 @@ class ContactController extends GetxController {
       }
 
       var myContacts = await myContactsQuery.get();
+      print(
+          "[ContactController] 🔍 Found ${myContacts.docs.length} outgoing accepted contacts");
 
       // Query where someone accepted me
       // NOTE: Removed orderBy to avoid index issues - can add back later with Firestore index
@@ -402,6 +482,8 @@ class ContactController extends GetxController {
       }
 
       var theirContacts = await theirContactsQuery.get();
+      print(
+          "[ContactController] 🔍 Found ${theirContacts.docs.length} incoming accepted contacts");
 
       // Step 2: Merge and deduplicate contact tokens
       Set<String> uniqueTokens = {};

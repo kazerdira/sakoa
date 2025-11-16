@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:sakoa/common/widgets/widgets.dart';
 import 'package:sakoa/common/entities/contact_entity.dart';
 import 'package:sakoa/common/entities/entities.dart';
 import 'index.dart';
@@ -287,22 +286,16 @@ class ContactPage extends GetView<ContactController> {
     );
   }
 
-  Widget _buildContactItem(ContactEntity contact, {int index = 0}) {
-    return TweenAnimationBuilder<double>(
-      duration:
-          Duration(milliseconds: 300 + (index * 50)), // ✨ Staggered animation
-      tween: Tween(begin: 0.0, end: 1.0),
-      curve: Curves.easeOutCubic,
-      builder: (context, value, child) {
-        return Transform.translate(
-          offset: Offset(0, 20 * (1 - value)), // ✨ Slide up effect
-          child: Opacity(
-            opacity: value, // ✨ Fade in effect
-            child: child,
-          ),
-        );
-      },
-      child: Container(
+  Widget _buildContactItem({required int index}) {
+    // 🔥 REACTIVE FIX: Access contact directly from controller inside Obx
+    // This ensures the widget rebuilds when contact object is replaced
+    return Obx(() {
+      // Re-read the contact from the list on every rebuild
+      final contact = controller.state.acceptedContacts[index];
+
+      // 🔥 FIX: Don't use TweenAnimationBuilder child cache - it prevents reactivity!
+      // Build the entire widget tree inside Obx() so changes are detected
+      return Container(
         padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 10.h),
         margin: EdgeInsets.symmetric(horizontal: 15.w, vertical: 5.h),
         decoration: BoxDecoration(
@@ -341,7 +334,7 @@ class ContactPage extends GetView<ContactController> {
                         Icon(Icons.person, size: 50.w),
                   ),
                 ),
-                // Online/Offline status indicator
+                // Online/Offline status indicator - 🔥 Updates via ContactController
                 Positioned(
                   right: 0,
                   bottom: 0,
@@ -414,8 +407,8 @@ class ContactPage extends GetView<ContactController> {
             ),
           ],
         ),
-      ),
-    ); // ✨ Close TweenAnimationBuilder
+      );
+    }); // 🔥 Close Obx()
   }
 
   Widget _buildRequestItem(ContactEntity request) {
@@ -836,10 +829,7 @@ class ContactPage extends GetView<ContactController> {
                                             : SizedBox.shrink());
                                       }
                                       return _buildContactItem(
-                                        controller
-                                            .state.acceptedContacts[index],
-                                        index:
-                                            index, // ✨ Pass index for staggered animation
+                                        index: index, // ✨ Pass index for lookup
                                       );
                                     },
                                   )),

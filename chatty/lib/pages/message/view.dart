@@ -147,23 +147,56 @@ class MessagePage extends GetView<MessageController> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: <Widget>[
-                              Text(
-                                item.last_time == null
-                                    ? ""
-                                    : duTimeLineFormat(
-                                        (item.last_time as Timestamp).toDate()),
-                                textAlign: TextAlign.end,
-                                overflow: TextOverflow.fade,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  fontFamily: 'Avenir',
-                                  fontWeight: FontWeight.normal,
-                                  color: AppColors.thirdElementText,
-                                  fontSize: 12.sp,
-                                ),
-                              ),
+                              // 🔥 TOP: Show "Last seen X ago" ONLY if offline (empty if online)
+                              Obx(() {
+                                final isOnline = (controller
+                                            .state.onlineStatus[item.token] ??
+                                        item.online ??
+                                        0) ==
+                                    1;
+                                final lastSeenText =
+                                    controller.state.lastSeen[item.token] ?? '';
+
+                                // Only show text if offline
+                                if (isOnline) {
+                                  return SizedBox
+                                      .shrink(); // No widget when online
+                                }
+
+                                return Text(
+                                  lastSeenText.isNotEmpty
+                                      ? lastSeenText
+                                      : "Offline",
+                                  textAlign: TextAlign.end,
+                                  overflow: TextOverflow.fade,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontFamily: 'Avenir',
+                                    fontWeight: FontWeight.normal,
+                                    color:
+                                        AppColors.primarySecondaryElementText,
+                                    fontSize: 10.sp,
+                                  ),
+                                );
+                              }),
+                              // 🔥 BOTTOM: Show unread badge OR message timestamp
                               item.msg_num == 0
-                                  ? Container()
+                                  ? Text(
+                                      item.last_time == null
+                                          ? ""
+                                          : duTimeLineFormat(
+                                              (item.last_time as Timestamp)
+                                                  .toDate()),
+                                      textAlign: TextAlign.end,
+                                      overflow: TextOverflow.fade,
+                                      maxLines: 1,
+                                      style: TextStyle(
+                                        fontFamily: 'Avenir',
+                                        fontWeight: FontWeight.normal,
+                                        color: AppColors.thirdElementText,
+                                        fontSize: 12.sp,
+                                      ),
+                                    )
                                   : Container(
                                       padding: EdgeInsets.only(
                                           left: 4.w,
