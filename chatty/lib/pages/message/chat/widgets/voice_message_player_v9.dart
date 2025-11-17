@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:sakoa/common/services/voice_cache_manager.dart';
 
 /// 🎵 VoiceMessagePlayerV10 - INDUSTRIAL-GRADE VOICE PLAYER
@@ -13,6 +14,7 @@ import 'package:sakoa/common/services/voice_cache_manager.dart';
 /// ✅ Lifecycle-safe cleanup
 /// ✅ Progress tracking only during actual downloads
 /// ✅ Debounced play button to prevent double-taps
+/// ✅ Fixed auto-play after download completion
 class VoiceMessagePlayerV10 extends StatefulWidget {
   final String messageId;
   final String audioUrl;
@@ -46,6 +48,9 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   // Debouncing
   bool _isProcessingAction = false;
   DateTime? _lastActionTime;
+
+  // Flag to track if we should auto-play after preparation
+  bool _shouldAutoPlayAfterPrepare = false;
 
   // Cache manager
   final _cacheManager = VoiceCacheManager.to;
@@ -118,7 +123,7 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   }
 
   /// 📥 Download and prepare player
-  Future<void> _downloadAndPrepare() async {
+  Future<void> _downloadAndPrepare({bool autoPlay = false}) async {
     // Prevent double-execution
     if (_isProcessingAction) {
       _log('⏳ Already processing - ignoring tap');
@@ -129,6 +134,9 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
 
     try {
       _transitionTo(PlayerLifecycleState.downloading, 'Starting download');
+
+      // Set auto-play flag
+      _shouldAutoPlayAfterPrepare = autoPlay;
 
       // Reset progress
       if (mounted) {
@@ -166,12 +174,13 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
       _isProcessingAction = false;
     } catch (e) {
       await _cleanupProgressSubscription();
-      _isProcessingAction = false; // Clear on error too
+      _isProcessingAction = false;
+      _shouldAutoPlayAfterPrepare = false; // Clear auto-play flag on error
       _handleError('Download/prepare failed', e);
     }
   }
 
-  /// 🔊 Prepare player from local file
+  /// 📊 Prepare player from local file
   Future<void> _preparePlayerFromLocalFile(String localPath) async {
     try {
       _transitionTo(PlayerLifecycleState.preparing, 'Loading audio');
@@ -179,21 +188,17 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
       await _controller.preparePlayer(
         path: localPath,
         shouldExtractWaveform: true,
-        noOfSamples: 150,
+        noOfSamples: 200,
       );
 
       await _controller.setFinishMode(finishMode: FinishMode.pause);
 
       _log('✅ Player prepared');
 
-      // Manually check and transition if state listener hasn't fired yet
-      if (_controller.playerState == PlayerState.initialized) {
-        _transitionTo(PlayerLifecycleState.ready, 'Ready to play');
-      } else {
-        _log(
-            '⚠️ Player state is ${_controller.playerState}, waiting for listener...');
-      }
+      // Don't manually transition here - let the state listener handle it
+      // The listener will check _shouldAutoPlayAfterPrepare and auto-play if needed
     } catch (e) {
+      _shouldAutoPlayAfterPrepare = false; // Clear auto-play flag on error
       _handleError('Prepare failed', e);
     }
   }
@@ -267,24 +272,9 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
 
       case PlayerLifecycleState.notDownloaded:
       case PlayerLifecycleState.checking:
-        // Download and prepare
+        // Download and prepare WITHOUT auto-play
         _log('📥 Starting download and prepare...');
-        await _downloadAndPrepare();
-
-        _log('📥 Download returned, current state: ${_lifecycleState.name}');
-
-        // Wait a moment for state listener to process
-        await Future.delayed(Duration(milliseconds: 50));
-
-        _log('📥 After delay, current state: ${_lifecycleState.name}');
-
-        // Auto-play after successful download
-        if (_lifecycleState == PlayerLifecycleState.ready && mounted) {
-          _log('▶️ Auto-playing after download');
-          await _play();
-        } else {
-          _log('⚠️ Not ready after download - state: ${_lifecycleState.name}');
-        }
+        await _downloadAndPrepare(autoPlay: false);
         break;
 
       case PlayerLifecycleState.downloading:
@@ -346,14 +336,9 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
     _retryCount++;
     _log('🔄 Retry attempt $_retryCount/$MAX_RETRIES');
 
-    // Reset state and try again
+    // Reset state and try again with auto-play
     _transitionTo(PlayerLifecycleState.notDownloaded, 'Retrying');
-    await _downloadAndPrepare();
-
-    // Auto-play after successful retry
-    if (_lifecycleState == PlayerLifecycleState.ready && mounted) {
-      await _play();
-    }
+    await _downloadAndPrepare(autoPlay: true);
   }
 
   /// ⚠️ Handle errors
@@ -382,6 +367,17 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
         _lifecycleState == PlayerLifecycleState.preparing) {
       // Player finished preparing and is ready
       _transitionTo(PlayerLifecycleState.ready, 'Player initialized');
+
+      // IMPORTANT: Clear the processing flag now that we're ready
+      _isProcessingAction = false;
+      _log('🔓 Cleared processing flag - ready for interaction');
+
+      // Check if we should auto-play
+      if (_shouldAutoPlayAfterPrepare) {
+        _log('▶️ Auto-playing after preparation');
+        _shouldAutoPlayAfterPrepare = false; // Reset flag
+        _play(); // Auto-play
+      }
     } else if (state.isPlaying) {
       _transitionTo(PlayerLifecycleState.playing);
     } else if (_lifecycleState == PlayerLifecycleState.playing) {
@@ -426,7 +422,7 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   /// 🎛️ Control button
   Widget _buildControlButton() {
     final isMyMsg = widget.isMyMessage;
-    final primaryColor = isMyMsg ? Color(0xFF0084FF) : Colors.grey.shade700;
+    final primaryColor = isMyMsg ? Colors.white : Colors.grey.shade700;
     final bgColor =
         isMyMsg ? primaryColor.withOpacity(0.2) : Colors.grey.shade200;
 
@@ -452,14 +448,16 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
         break;
 
       case PlayerLifecycleState.playing:
-        icon = Icon(Icons.pause, size: 20, color: Colors.white);
-        iconColor = Colors.white;
+        icon = Icon(Icons.pause,
+            size: 20, color: isMyMsg ? Color(0xFF128C7E) : Colors.white);
+        iconColor = isMyMsg ? Color(0xFF128C7E) : Colors.white;
         break;
 
       case PlayerLifecycleState.ready:
       case PlayerLifecycleState.paused:
-        icon = Icon(Icons.play_arrow, size: 20, color: Colors.white);
-        iconColor = Colors.white;
+        icon = Icon(Icons.play_arrow,
+            size: 20, color: isMyMsg ? Color(0xFF128C7E) : Colors.white);
+        iconColor = isMyMsg ? Color(0xFF128C7E) : Colors.white;
         break;
     }
 
@@ -484,7 +482,7 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   /// ⏳ Progress indicator (downloading)
   Widget _buildProgressIndicator() {
     final isMyMsg = widget.isMyMessage;
-    final color = isMyMsg ? Color(0xFF0084FF) : Colors.grey.shade600;
+    final color = isMyMsg ? Color(0xFF128C7E) : Colors.grey.shade600;
 
     return Container(
       width: 36,
@@ -542,8 +540,7 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   /// 📊 Waveform area
   Widget _buildWaveformArea() {
     final isMyMsg = widget.isMyMessage;
-    final textColor = isMyMsg ? Colors.white70 : Colors.grey.shade600;
-    final waveColor = isMyMsg ? Colors.white : Colors.grey.shade600;
+    final color = isMyMsg ? Colors.white : Colors.grey.shade600;
 
     // Error state
     if (_lifecycleState == PlayerLifecycleState.error) {
@@ -562,14 +559,14 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
           Text(
             'Downloading... ${(_downloadProgress * 100).toStringAsFixed(0)}%',
             style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w500, color: textColor),
+                fontSize: 11.sp, fontWeight: FontWeight.w500, color: color),
           ),
-          SizedBox(height: 4),
+          SizedBox(height: 4.w),
           LinearProgressIndicator(
             value: _downloadProgress > 0 ? _downloadProgress : null,
             minHeight: 2,
-            backgroundColor: isMyMsg ? Colors.white24 : Colors.grey.shade300,
-            valueColor: AlwaysStoppedAnimation(waveColor),
+            backgroundColor: Colors.grey.shade300,
+            valueColor: AlwaysStoppedAnimation(color),
           ),
         ],
       );
@@ -577,13 +574,11 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
 
     // Status messages
     if (_lifecycleState == PlayerLifecycleState.preparing) {
-      return Text('Preparing...',
-          style: TextStyle(fontSize: 11, color: textColor));
+      return Text('Preparing...', style: TextStyle(fontSize: 11, color: color));
     }
 
     if (_lifecycleState == PlayerLifecycleState.checking) {
-      return Text('Checking...',
-          style: TextStyle(fontSize: 11, color: textColor));
+      return Text('Checking...', style: TextStyle(fontSize: 11, color: color));
     }
 
     if (_lifecycleState == PlayerLifecycleState.notDownloaded ||
@@ -593,24 +588,25 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
         style: TextStyle(
             fontSize: 11,
             fontStyle: FontStyle.italic,
-            color: textColor.withOpacity(0.7)),
+            color: color.withOpacity(0.7)),
       );
     }
 
     // Waveform (ready/playing/paused)
     return AudioFileWaveforms(
-      size: Size(MediaQuery.of(context).size.width * 0.5, 50),
+      size: Size(MediaQuery.of(context).size.width * 0.35, 50),
       playerController: _controller,
-      waveformType: WaveformType.fitWidth,
+      waveformType: WaveformType.long,
+      enableSeekGesture: true,
       playerWaveStyle: PlayerWaveStyle(
-        fixedWaveColor: waveColor.withOpacity(0.4),
-        liveWaveColor: waveColor,
-        spacing: 4.5,
-        scaleFactor: 200,
-        waveThickness: 3.5,
+        fixedWaveColor: color.withOpacity(0.4),
+        liveWaveColor: color,
+        spacing: 3.0,
+        scaleFactor: 150,
+        waveThickness: 2.5,
         showSeekLine: true,
-        seekLineColor: waveColor.withOpacity(0.8),
-        seekLineThickness: 2.0,
+        seekLineColor: color,
+        seekLineThickness: 2.5,
         waveCap: StrokeCap.round,
       ),
     );
@@ -619,7 +615,7 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   /// ⏱️ Duration display
   Widget _buildDuration() {
     final isMyMsg = widget.isMyMessage;
-    final color = isMyMsg ? Colors.blue.shade700 : Colors.grey.shade700;
+    final color = isMyMsg ? Colors.white70 : Colors.grey.shade700;
 
     return Text(
       widget.duration ?? '0:00',

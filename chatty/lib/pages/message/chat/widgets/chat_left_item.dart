@@ -11,12 +11,19 @@ import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 // 🔥 Voice & Reply imports
-import 'package:sakoa/pages/message/chat/widgets/voice_message_player.dart';
+import 'package:sakoa/pages/message/chat/widgets/voice_message_player_v9.dart';
 import 'package:sakoa/pages/message/chat/widgets/in_message_reply_bubble.dart';
 import 'package:sakoa/pages/message/chat/controller.dart';
 import 'package:flutter/services.dart';
 // 🔥 V2: Message delivery service for timestamp grouping
 import 'package:sakoa/common/services/message_delivery_service.dart';
+
+// 🔥 Helper function to format voice message duration
+String _formatDuration(int seconds) {
+  final minutes = seconds ~/ 60;
+  final secs = seconds % 60;
+  return '${minutes.toString().padLeft(1, '0')}:${secs.toString().padLeft(2, '0')}';
+}
 
 Widget LeftRichTextContainer(String textContent) {
   const urlPattern =
@@ -299,7 +306,7 @@ Widget _buildChatLeftItem(
             children: <Widget>[
               ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: 250.w,
+                  maxWidth: item.type == "voice" ? 200.w : 250.w,
                   minHeight: 40.w,
                 ),
                 child: Column(
@@ -308,12 +315,9 @@ Widget _buildChatLeftItem(
                   children: [
                     Container(
                       margin: EdgeInsets.only(left: 0.w, top: 0.w),
-                      padding: EdgeInsets.only(
-                        top: 10.w,
-                        bottom: 10.w,
-                        left: 10.w,
-                        right: 10.w,
-                      ),
+                      padding: item.type == "voice"
+                          ? EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.w)
+                          : EdgeInsets.all(10.w),
                       // 🔥 V2: Smart bubble grouping with Telegram-style corners
                       decoration: BoxDecoration(
                         color: AppColors.primarySecondaryBackground,
@@ -347,10 +351,11 @@ Widget _buildChatLeftItem(
                           if (item.type == "text")
                             LeftRichTextContainer("${item.content}")
                           else if (item.type == "voice")
-                            VoiceMessagePlayer(
+                            VoiceMessagePlayerV10(
                               messageId: item.id ?? '',
                               audioUrl: item.content ?? '',
-                              durationSeconds: item.voice_duration ?? 0,
+                              duration:
+                                  _formatDuration(item.voice_duration ?? 0),
                               isMyMessage: false,
                             )
                           else // Image
