@@ -178,8 +178,8 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
 
       await _controller.preparePlayer(
         path: localPath,
-        shouldExtractWaveform: false,
-        noOfSamples: 100,
+        shouldExtractWaveform: true,
+        noOfSamples: 150,
       );
 
       await _controller.setFinishMode(finishMode: FinishMode.pause);
@@ -542,7 +542,8 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   /// 📊 Waveform area
   Widget _buildWaveformArea() {
     final isMyMsg = widget.isMyMessage;
-    final color = isMyMsg ? Color(0xFF128C7E) : Colors.grey.shade600;
+    final textColor = isMyMsg ? Colors.white70 : Colors.grey.shade600;
+    final waveColor = isMyMsg ? Colors.white : Colors.grey.shade600;
 
     // Error state
     if (_lifecycleState == PlayerLifecycleState.error) {
@@ -561,14 +562,14 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
           Text(
             'Downloading... ${(_downloadProgress * 100).toStringAsFixed(0)}%',
             style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w500, color: color),
+                fontSize: 11, fontWeight: FontWeight.w500, color: textColor),
           ),
           SizedBox(height: 4),
           LinearProgressIndicator(
             value: _downloadProgress > 0 ? _downloadProgress : null,
             minHeight: 2,
-            backgroundColor: Colors.grey.shade300,
-            valueColor: AlwaysStoppedAnimation(color),
+            backgroundColor: isMyMsg ? Colors.white24 : Colors.grey.shade300,
+            valueColor: AlwaysStoppedAnimation(waveColor),
           ),
         ],
       );
@@ -576,11 +577,13 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
 
     // Status messages
     if (_lifecycleState == PlayerLifecycleState.preparing) {
-      return Text('Preparing...', style: TextStyle(fontSize: 11, color: color));
+      return Text('Preparing...',
+          style: TextStyle(fontSize: 11, color: textColor));
     }
 
     if (_lifecycleState == PlayerLifecycleState.checking) {
-      return Text('Checking...', style: TextStyle(fontSize: 11, color: color));
+      return Text('Checking...',
+          style: TextStyle(fontSize: 11, color: textColor));
     }
 
     if (_lifecycleState == PlayerLifecycleState.notDownloaded ||
@@ -590,20 +593,24 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
         style: TextStyle(
             fontSize: 11,
             fontStyle: FontStyle.italic,
-            color: color.withOpacity(0.7)),
+            color: textColor.withOpacity(0.7)),
       );
     }
 
     // Waveform (ready/playing/paused)
     return AudioFileWaveforms(
-      size: Size(MediaQuery.of(context).size.width * 0.4, 40),
+      size: Size(MediaQuery.of(context).size.width * 0.5, 50),
       playerController: _controller,
       waveformType: WaveformType.fitWidth,
       playerWaveStyle: PlayerWaveStyle(
-        fixedWaveColor: color.withOpacity(0.3),
-        liveWaveColor: color,
-        spacing: 4,
-        showSeekLine: false,
+        fixedWaveColor: waveColor.withOpacity(0.4),
+        liveWaveColor: waveColor,
+        spacing: 4.5,
+        scaleFactor: 200,
+        waveThickness: 3.5,
+        showSeekLine: true,
+        seekLineColor: waveColor.withOpacity(0.8),
+        seekLineThickness: 2.0,
         waveCap: StrokeCap.round,
       ),
     );
