@@ -199,6 +199,14 @@ class VoiceCacheManager extends GetxService {
     }
   }
 
+  /// Get cached file path (if exists)
+  String? getCachedPath(String messageId) {
+    if (isCached(messageId)) {
+      return _getCachedFilePath(messageId);
+    }
+    return null;
+  }
+
   /// Clear all cached voice messages
   Future<void> clearCache() async {
     try {

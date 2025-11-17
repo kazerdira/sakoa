@@ -10,6 +10,7 @@ import 'package:sakoa/common/services/chat_manager_service.dart';
 import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 Voice messaging
+import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🔥 Voice cache manager
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/utils/utils.dart';
@@ -49,6 +50,10 @@ class Global {
     // 🔥 SUPERNOVA: Initialize Voice Message Cache Service (Simpler & Better)
     print('[Global] 🚀 Initializing VoiceMessageCacheService...');
     await Get.putAsync(() => VoiceMessageCacheService().init());
+
+    // 🔥 Initialize VoiceCacheManager (needed by voice player)
+    print('[Global] 🚀 Initializing VoiceCacheManager...');
+    await Get.putAsync(() => VoiceCacheManager().init());
 
     // 🔥 INDUSTRIAL-GRADE: Initialize Message Delivery Tracking Service
     print('[Global] 🚀 Initializing MessageDeliveryService...');

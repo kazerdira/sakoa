@@ -7,7 +7,7 @@ import 'package:sakoa/common/values/values.dart';
 import 'package:sakoa/common/widgets/toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter_easyloading/flutter_easyloading.dart';
+// import 'package:flutter_easyloading/flutter_easyloading.dart'; // 🔥 Removed: No longer blocking UI
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -307,18 +307,12 @@ class ChatController extends GetxController {
         return;
       }
 
-      // Show uploading indicator
-      EasyLoading.show(
-        status: 'Uploading voice message...',
-        maskType: EasyLoadingMaskType.clear,
-      );
-
+      // 🔥 FIX: No EasyLoading to avoid blocking UI updates
       // Upload to Firebase Storage
       print('[ChatController] ☁️ Uploading voice message...');
       final audioUrl = await _voiceService.uploadVoiceMessage(localPath);
 
       if (audioUrl == null) {
-        EasyLoading.dismiss();
         print('[ChatController] ❌ Upload failed');
         return;
       }
@@ -326,12 +320,10 @@ class ChatController extends GetxController {
       // Send voice message to Firestore
       await sendVoiceMessage(audioUrl, _voiceService.recordingDuration.value);
 
-      EasyLoading.dismiss();
       print('[ChatController] ✅ Voice message sent successfully');
     } catch (e, stackTrace) {
       print('[ChatController] ❌ Failed to send voice message: $e');
       print('[ChatController] Stack trace: $stackTrace');
-      EasyLoading.dismiss();
       toastInfo(msg: "Failed to send voice message");
       isRecordingVoice.value = false;
     }
