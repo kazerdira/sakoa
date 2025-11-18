@@ -1,59 +1,57 @@
 import 'package:flutter/material.dart';
-import 'package:sakoa/common/entities/entities.dart';
-import 'package:sakoa/common/routes/routes.dart';
 import 'package:get/get.dart';
-import 'package:sakoa/common/store/store.dart';
-import 'package:sakoa/common/utils/security.dart';
-import 'package:sakoa/common/values/server.dart';
 import 'package:sakoa/common/widgets/toast.dart';
+import 'package:sakoa/common/repositories/auth/auth_repository.dart';
+import 'package:sakoa/common/exceptions/auth_exceptions.dart';
 import 'index.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
-
 
 class ForgotController extends GetxController {
   final state = ForgotState();
-  FirebaseAuth _auth = FirebaseAuth.instance;
+  final AuthRepository _authRepository = Get.find<AuthRepository>();
   TextEditingController? EmailEditingController = TextEditingController();
   ForgotController();
 
-  handleEmailForgot() async{
+  /// Handle password reset using AuthRepository
+  Future<void> handleEmailForgot() async {
     String emailAddress = state.email.value;
-    if(emailAddress.isEmpty){
-      toastInfo(msg: "Email not empty!");
+
+    // Validate input
+    if (emailAddress.isEmpty) {
+      toastInfo(msg: "Email cannot be empty!");
       return;
     }
+
+    // Dismiss keyboard
     Get.focusScope?.unfocus();
+
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: emailAddress);
-      toastInfo(msg: "An email has been sent to your registered email. To activate your account, please open the link from the email.");
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'weak-password') {
-        print('The password provided is too weak.');
-        toastInfo(msg: "The password provided is too weak.");
-      } else if (e.code == 'email-already-in-use') {
-        print('The account already exists for that email.');
-        toastInfo(msg: "The account already exists for that email.");
-      }
+      // Send password reset email using AuthRepository
+      await _authRepository.sendPasswordReset(email: emailAddress);
+
+      // Success - show confirmation message
+      toastInfo(
+        msg: "A password reset email has been sent to your registered email. "
+            "Please open the link from the email to reset your password.",
+      );
+    } on PasswordResetException catch (e) {
+      toastInfo(msg: e.getUserMessage());
+      print('[Forgot] ❌ Password reset error: ${e.message}');
+    } on AuthException catch (e) {
+      toastInfo(msg: e.getUserMessage());
+      print('[Forgot] ❌ Auth error: ${e.message}');
     } catch (e) {
-      print(e);
+      toastInfo(msg: 'Password reset failed. Please try again.');
+      print('[Forgot] ❌ Unexpected error: $e');
     }
-
-
   }
-
 
   @override
   void onReady() {
     super.onReady();
-    FirebaseAuth.instance.authStateChanges().listen((User? user) {
-      print(user);
-      if (user == null) {
-        print('User is currently signed out!');
-      } else {
-        print('User is signed in!');
-      }
+    // Listen to auth state changes using AuthRepository
+    _authRepository.authStateChanges.listen((user) {
+      print(
+          '[Forgot] Auth state changed: ${user != null ? 'signed in' : 'signed out'}');
     });
   }
 
