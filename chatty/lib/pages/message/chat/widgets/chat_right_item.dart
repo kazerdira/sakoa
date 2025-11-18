@@ -442,6 +442,8 @@ Widget _buildChatRightItem(
                               duration:
                                   _formatDuration(item.voice_duration ?? 0),
                               isMyMessage: true,
+                              isUploading: item.delivery_status ==
+                                  'sending', // 🔥 Show spinner while status is 'sending'
                             )
                           else // Image
                             ConstrainedBox(

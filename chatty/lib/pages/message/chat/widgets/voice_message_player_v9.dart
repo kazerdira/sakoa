@@ -20,6 +20,7 @@ class VoiceMessagePlayerV10 extends StatefulWidget {
   final String audioUrl;
   final bool isMyMessage;
   final String? duration;
+  final bool isUploading; // 🔥 NEW: Track if message is still uploading
 
   const VoiceMessagePlayerV10({
     Key? key,
@@ -27,6 +28,7 @@ class VoiceMessagePlayerV10 extends StatefulWidget {
     required this.audioUrl,
     required this.isMyMessage,
     this.duration,
+    this.isUploading = false, // Default to false for existing messages
   }) : super(key: key);
 
   @override
@@ -97,6 +99,13 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
   /// 🚀 Initialize player - check cache and prepare if available
   Future<void> _initializePlayer() async {
     try {
+      // 🔥 NEW: If message is still uploading, show spinner
+      if (widget.isUploading) {
+        _log('☁️ Message is uploading...');
+        _transitionTo(PlayerLifecycleState.uploading, 'Upload in progress');
+        return; // Don't proceed until upload completes
+      }
+
       _transitionTo(PlayerLifecycleState.checking, 'Initial check');
 
       // Check if cached
@@ -270,6 +279,11 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
         await _retry();
         break;
 
+      case PlayerLifecycleState.uploading:
+        // Do nothing - wait for upload to complete
+        _log('☁️ Upload in progress, please wait...');
+        break;
+
       case PlayerLifecycleState.notDownloaded:
       case PlayerLifecycleState.checking:
         // Download and prepare WITHOUT auto-play
@@ -434,6 +448,10 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
         icon = Icon(Icons.refresh, size: 20, color: Colors.red.shade700);
         iconColor = Colors.red.shade700;
         break;
+
+      // 🔥 NEW: Show spinner while uploading to Firebase (sender only)
+      case PlayerLifecycleState.uploading:
+        return _buildLoadingIndicator(bgColor, iconColor);
 
       case PlayerLifecycleState.downloading:
         return _buildProgressIndicator();
@@ -628,6 +646,7 @@ class _VoiceMessagePlayerV10State extends State<VoiceMessagePlayerV10> {
 enum PlayerLifecycleState {
   uninitialized, // Just created
   checking, // Checking cache status
+  uploading, // 🔥 NEW: Uploading to Firebase (sender only)
   notDownloaded, // Not in cache, ready to download
   downloading, // Actively downloading
   preparing, // Preparing audio file

@@ -313,12 +313,31 @@ class ChatController extends GetxController {
       final tempCopyPath = '${localPath}_precache';
       await File(localPath).copy(tempCopyPath);
 
+      // 🔥 NEW: Add placeholder message with 'sending' status BEFORE upload
+      final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+      final placeholderMessage = Msgcontent(
+        id: tempId,
+        token: token,
+        content: '', // Will be updated with audioUrl after upload
+        type: "voice",
+        addtime: Timestamp.now(),
+        voice_duration: _voiceService.recordingDuration.value.inSeconds,
+        delivery_status: 'sending', // 🔥 Shows spinner in UI
+        reply: isReplyMode.value ? replyingTo.value : null,
+      );
+
+      // Add to UI immediately (shows with spinner)
+      state.msgcontentList.insert(0, placeholderMessage);
+      print('[ChatController] 🎨 Added placeholder message with spinner');
+
       // 🔥 FIX: No EasyLoading to avoid blocking UI updates
       // Upload to Firebase Storage
       print('[ChatController] ☁️ Uploading voice message...');
       final audioUrl = await _voiceService.uploadVoiceMessage(localPath);
 
       if (audioUrl == null) {
+        // Remove placeholder on failure
+        state.msgcontentList.removeWhere((msg) => msg.id == tempId);
         // Clean up temp copy on failure
         try {
           await File(tempCopyPath).delete();
@@ -326,6 +345,10 @@ class ChatController extends GetxController {
         print('[ChatController] ❌ Upload failed');
         return;
       }
+
+      // 🔥 Remove placeholder before sending real message
+      state.msgcontentList.removeWhere((msg) => msg.id == tempId);
+      print('[ChatController] 🗑️ Removed placeholder message');
 
       // Send voice message to Firestore WITH pre-caching
       await sendVoiceMessage(audioUrl, _voiceService.recordingDuration.value,

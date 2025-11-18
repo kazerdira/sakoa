@@ -10,5 +10,4 @@ class ChatState {
   RxBool more_status = false.obs;
   RxBool isloading = false.obs;
   RxInt inputHeight = 50.obs;
-
 }
