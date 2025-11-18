@@ -12,10 +12,12 @@ import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 Voice messaging
 import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🔥 Voice cache manager
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
+import 'package:sakoa/common/repositories/chat_repository.dart'; // 🏗️ REPOSITORY: Business logic layer
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/utils/utils.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Global {
   static Future init() async {
@@ -59,8 +61,17 @@ class Global {
     print('[Global] 🚀 Initializing MessageDeliveryService...');
     await Get.putAsync(() => MessageDeliveryService().init());
 
+    // 🏗️ REPOSITORY LAYER: Initialize ChatRepository (lazy - created when needed)
+    print('[Global] 🚀 Registering ChatRepository...');
+    Get.lazyPut<ChatRepository>(() => ChatRepository(
+          deliveryService: Get.find<MessageDeliveryService>(),
+          voiceService: Get.find<VoiceMessageService>(),
+          cacheManager: Get.find<VoiceCacheManager>(),
+          db: FirebaseFirestore.instance,
+        ));
+
     print(
-        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage, MessageDelivery)');
+        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage, MessageDelivery, ChatRepository)');
   }
 
   static void setSystemUi() {

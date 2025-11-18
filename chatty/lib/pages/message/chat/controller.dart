@@ -2,22 +2,16 @@ import 'dart:io';
 import 'dart:async';
 import 'package:sakoa/common/apis/apis.dart';
 import 'package:sakoa/common/routes/names.dart';
-import 'package:sakoa/common/utils/utils.dart';
-import 'package:sakoa/common/values/values.dart';
 import 'package:sakoa/common/widgets/toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 // import 'package:flutter_easyloading/flutter_easyloading.dart'; // 🔥 Removed: No longer blocking UI
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'state.dart';
 import 'package:sakoa/common/entities/entities.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:sakoa/common/store/store.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart';
 import 'package:sakoa/pages/contact/index.dart';
 import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
@@ -25,6 +19,7 @@ import 'package:sakoa/common/widgets/block_settings_dialog.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 NEW: Voice messaging
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
 import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🎯 FIX #1: Pre-caching
+import 'package:sakoa/common/repositories/chat_repository.dart'; // 🏗️ REPOSITORY: Business logic layer
 
 class ChatController extends GetxController {
   ChatController();
@@ -48,14 +43,17 @@ class ChatController extends GetxController {
   StreamSubscription? _blockListener;
 
   // 🔥 VOICE MESSAGING & REPLY SYSTEM
-  late final VoiceMessageService _voiceService;
+  late VoiceMessageService _voiceService;
   final replyingTo = Rx<MessageReply?>(null);
   final isReplyMode = false.obs;
   final isRecordingVoice = false.obs;
   final recordingCancelled = false.obs;
 
   // 🔥 INDUSTRIAL-GRADE MESSAGE DELIVERY SERVICE
-  late final MessageDeliveryService _deliveryService;
+  late MessageDeliveryService _deliveryService;
+
+  // 🏗️ REPOSITORY: Business logic orchestrator
+  late ChatRepository _chatRepository;
 
   goMore() {
     state.more_status.value = state.more_status.value ? false : true;
@@ -286,9 +284,19 @@ class ChatController extends GetxController {
   }
 
   /// Stop recording and send voice message
+  /// 🎤 Stop recording and send voice message
+  /// 🏗️ REFACTORED: Now uses ChatRepository (thin controller pattern)
   Future<void> stopAndSendVoiceMessage() async {
     try {
       if (!isRecordingVoice.value) return;
+
+      // Validate token
+      if (token == null || token!.isEmpty) {
+        print('[ChatController] ❌ No user token available');
+        toastInfo(msg: "Unable to send message - user not authenticated");
+        isRecordingVoice.value = false;
+        return;
+      }
 
       // Check if recording was cancelled
       if (recordingCancelled.value) {
@@ -308,17 +316,12 @@ class ChatController extends GetxController {
         return;
       }
 
-      // 🎯 FIX #1: Copy file BEFORE upload (upload deletes it!)
-      print('[ChatController] 📋 Copying local file for pre-caching...');
-      final tempCopyPath = '${localPath}_precache';
-      await File(localPath).copy(tempCopyPath);
-
-      // 🔥 NEW: Add placeholder message with 'sending' status BEFORE upload
+      //  Add placeholder message with 'sending' status (shows spinner)
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
       final placeholderMessage = Msgcontent(
         id: tempId,
         token: token,
-        content: '', // Will be updated with audioUrl after upload
+        content: '',
         type: "voice",
         addtime: Timestamp.now(),
         voice_duration: _voiceService.recordingDuration.value.inSeconds,
@@ -326,40 +329,57 @@ class ChatController extends GetxController {
         reply: isReplyMode.value ? replyingTo.value : null,
       );
 
-      // Add to UI immediately (shows with spinner)
       state.msgcontentList.insert(0, placeholderMessage);
-      print('[ChatController] 🎨 Added placeholder message with spinner');
+      print('[ChatController] 🎨 Added placeholder with spinner');
 
-      // 🔥 FIX: No EasyLoading to avoid blocking UI updates
-      // Upload to Firebase Storage
-      print('[ChatController] ☁️ Uploading voice message...');
-      final audioUrl = await _voiceService.uploadVoiceMessage(localPath);
+      // 🏗️ REPOSITORY: Delegate to repository (handles upload, pre-cache, metadata)
+      final result = await _chatRepository.sendVoiceMessage(
+        chatDocId: doc_id,
+        senderToken: token!,
+        localPath: localPath,
+        duration: _voiceService.recordingDuration.value,
+        reply: isReplyMode.value ? replyingTo.value : null,
+        onMessageAdded: (messageId) {
+          // 🔄 REPLACE placeholder with real message ID (prevents duplicate from Firestore)
+          final index =
+              state.msgcontentList.indexWhere((msg) => msg.id == tempId);
+          if (index != -1) {
+            final placeholder = state.msgcontentList[index];
+            state.msgcontentList[index] = Msgcontent(
+              id: messageId,
+              token: placeholder.token,
+              content: placeholder.content,
+              type: placeholder.type,
+              addtime: placeholder.addtime,
+              voice_duration: placeholder.voice_duration,
+              delivery_status: 'sent',
+              reply: placeholder.reply,
+              sent_at: placeholder.sent_at,
+              delivered_at: placeholder.delivered_at,
+              read_at: placeholder.read_at,
+              retry_count: placeholder.retry_count,
+            );
+            state.msgcontentList.refresh();
+            print(
+                '[ChatController] 🔄 Replaced placeholder ID: $tempId → $messageId');
+          }
+        },
+      );
 
-      if (audioUrl == null) {
-        // Remove placeholder on failure
+      // If failed, remove placeholder
+      if (!result.success && !result.queued) {
         state.msgcontentList.removeWhere((msg) => msg.id == tempId);
-        // Clean up temp copy on failure
-        try {
-          await File(tempCopyPath).delete();
-        } catch (_) {}
-        print('[ChatController] ❌ Upload failed');
+        toastInfo(msg: "Failed to send voice message");
+        print('[ChatController] ❌ Send failed: ${result.error}');
         return;
       }
 
-      // 🔥 Remove placeholder before sending real message
-      state.msgcontentList.removeWhere((msg) => msg.id == tempId);
-      print('[ChatController] 🗑️ Removed placeholder message');
+      // Send notification and clear reply mode
+      await sendNotifications("voice");
+      clearReplyMode();
 
-      // Send voice message to Firestore WITH pre-caching
-      await sendVoiceMessage(audioUrl, _voiceService.recordingDuration.value,
-          localPath: tempCopyPath); // Pass temp copy
-
-      // Clean up temp copy after pre-caching
-      try {
-        await File(tempCopyPath).delete();
-      } catch (_) {}
-
-      print('[ChatController] ✅ Voice message sent successfully');
+      print(
+          '[ChatController] ✅ Voice message sent successfully (queued: ${result.queued})');
     } catch (e, stackTrace) {
       print('[ChatController] ❌ Failed to send voice message: $e');
       print('[ChatController] Stack trace: $stackTrace');
@@ -375,6 +395,10 @@ class ChatController extends GetxController {
   }
 
   /// Send voice message to Firestore
+  /// ⚠️ DEPRECATED: Use ChatRepository.sendVoiceMessage() instead
+  /// This method is kept for backward compatibility but should not be used
+  /// All voice message logic has been moved to the repository layer
+  @Deprecated('Use _chatRepository.sendVoiceMessage() instead')
   Future<void> sendVoiceMessage(String audioUrl, Duration duration,
       {String? localPath}) async {
     try {
@@ -430,7 +454,7 @@ class ChatController extends GetxController {
             }
 
             final cacheManager = Get.find<VoiceCacheManager>();
-            print('[DEBUG] Got cache manager: ${cacheManager != null}');
+            print('[DEBUG] Got cache manager');
 
             final cached = await cacheManager.preCacheLocalFile(
               messageId: messageId,
@@ -595,15 +619,15 @@ class ChatController extends GetxController {
               msgcontent.toFirestore(),
         )
         .orderBy("addtime", descending: true)
-        .where("addtime", isLessThan: state.msgcontentList.value.last.addtime)
+        .where("addtime", isLessThan: state.msgcontentList.last.addtime)
         .limit(10)
         .get();
-    print(state.msgcontentList.value.last.content);
+    print(state.msgcontentList.last.content);
     print("isGreaterThan-----");
     if (messages.docs.isNotEmpty) {
       messages.docs.forEach((element) {
         var data = element.data();
-        state.msgcontentList.value.add(data);
+        state.msgcontentList.add(data);
         print(data.content);
       });
 
@@ -828,6 +852,10 @@ class ChatController extends GetxController {
     _deliveryService = Get.find<MessageDeliveryService>();
     print('[ChatController] ✅ Delivery tracking service initialized');
 
+    // 🏗️ REPOSITORY LAYER
+    _chatRepository = Get.find<ChatRepository>();
+    print('[ChatController] ✅ Chat repository initialized');
+
     clear_msg_num(doc_id);
   }
 
@@ -859,6 +887,14 @@ class ChatController extends GetxController {
               print("added----: ${change.doc.data()}");
               if (change.doc.data() != null) {
                 final msg = change.doc.data()!;
+
+                // 🔥 SKIP if message already exists in list (avoid duplicates from placeholder)
+                if (msg.id != null &&
+                    state.msgcontentList.any((m) => m.id == msg.id)) {
+                  print(
+                      '[ChatController] ⏭️ Skipping duplicate message: ${msg.id}');
+                  continue;
+                }
 
                 // 🔥 BLOCK INCOMING MESSAGES from blocked users
                 if (msg.token != null && msg.token != token) {
@@ -904,7 +940,7 @@ class ChatController extends GetxController {
           }
         }
         tempMsgList.reversed.forEach((element) {
-          state.msgcontentList.value.insert(0, element);
+          state.msgcontentList.insert(0, element);
         });
         state.msgcontentList.refresh();
 
