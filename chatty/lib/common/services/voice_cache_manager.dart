@@ -207,6 +207,58 @@ class VoiceCacheManager extends GetxService {
     return null;
   }
 
+  /// 🎯 FIX #1: Pre-cache local recording (sender's instant playback)
+  /// Copies the local recording file to cache so sender doesn't need to download
+  Future<bool> preCacheLocalFile({
+    required String messageId,
+    required String localFilePath,
+    required String audioUrl,
+  }) async {
+    try {
+      print('[VoiceCacheManager] 🎤 Pre-caching local recording: $messageId');
+
+      // Check if local file exists
+      final localFile = File(localFilePath);
+      if (!await localFile.exists()) {
+        print('[VoiceCacheManager] ❌ Local file not found: $localFilePath');
+        return false;
+      }
+
+      // Get cache file path
+      final cachedPath = _getCachedFilePath(messageId);
+      final cacheFile = File(cachedPath);
+
+      // Create parent directory if needed
+      if (!await cacheFile.parent.exists()) {
+        await cacheFile.parent.create(recursive: true);
+      }
+
+      // Copy local recording to cache
+      await localFile.copy(cachedPath);
+      final fileSize = await cacheFile.length();
+
+      // Save metadata
+      await _addCacheEntry(
+        messageId: messageId,
+        audioUrl: audioUrl,
+        filePath: cachedPath,
+        fileSize: fileSize,
+      );
+
+      // Mark as completed
+      downloadStatus[messageId] = VoiceDownloadStatus.completed;
+      downloadProgress[messageId] = 1.0;
+
+      print(
+          '[VoiceCacheManager] ✅ Pre-cached: $messageId (${fileSize ~/ 1024}KB)');
+      return true;
+    } catch (e, stackTrace) {
+      print('[VoiceCacheManager] ❌ Pre-cache failed: $e');
+      print('[VoiceCacheManager] Stack: $stackTrace');
+      return false; // Graceful failure - user will download normally
+    }
+  }
+
   /// Clear all cached voice messages
   Future<void> clearCache() async {
     try {

@@ -24,6 +24,7 @@ import 'package:sakoa/common/services/chat_security_service.dart';
 import 'package:sakoa/common/widgets/block_settings_dialog.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 NEW: Voice messaging
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
+import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🎯 FIX #1: Pre-caching
 
 class ChatController extends GetxController {
   ChatController();
@@ -307,18 +308,33 @@ class ChatController extends GetxController {
         return;
       }
 
+      // 🎯 FIX #1: Copy file BEFORE upload (upload deletes it!)
+      print('[ChatController] 📋 Copying local file for pre-caching...');
+      final tempCopyPath = '${localPath}_precache';
+      await File(localPath).copy(tempCopyPath);
+
       // 🔥 FIX: No EasyLoading to avoid blocking UI updates
       // Upload to Firebase Storage
       print('[ChatController] ☁️ Uploading voice message...');
       final audioUrl = await _voiceService.uploadVoiceMessage(localPath);
 
       if (audioUrl == null) {
+        // Clean up temp copy on failure
+        try {
+          await File(tempCopyPath).delete();
+        } catch (_) {}
         print('[ChatController] ❌ Upload failed');
         return;
       }
 
-      // Send voice message to Firestore
-      await sendVoiceMessage(audioUrl, _voiceService.recordingDuration.value);
+      // Send voice message to Firestore WITH pre-caching
+      await sendVoiceMessage(audioUrl, _voiceService.recordingDuration.value,
+          localPath: tempCopyPath); // Pass temp copy
+
+      // Clean up temp copy after pre-caching
+      try {
+        await File(tempCopyPath).delete();
+      } catch (_) {}
 
       print('[ChatController] ✅ Voice message sent successfully');
     } catch (e, stackTrace) {
@@ -336,7 +352,8 @@ class ChatController extends GetxController {
   }
 
   /// Send voice message to Firestore
-  Future<void> sendVoiceMessage(String audioUrl, Duration duration) async {
+  Future<void> sendVoiceMessage(String audioUrl, Duration duration,
+      {String? localPath}) async {
     try {
       print('[ChatController] 📤 Sending voice message to Firestore...');
 
@@ -359,8 +376,57 @@ class ChatController extends GetxController {
       );
 
       if (result.success || result.queued) {
+        final messageId = result.messageId;
         print(
-            '[ChatController] ✅ Voice message sent: ${result.messageId} (queued: ${result.queued})');
+            '[ChatController] ✅ Voice message sent: $messageId (queued: ${result.queued})');
+
+        // 🎯 FIX #1: Pre-cache local recording for instant sender playback
+        if (localPath != null && messageId != null && messageId.isNotEmpty) {
+          try {
+            print('[ChatController] 🎯 Pre-caching local recording...');
+            print('[DEBUG] Message ID: $messageId');
+            print('[DEBUG] Local path: $localPath');
+            print('[DEBUG] Audio URL: $audioUrl');
+
+            // Verify temp file exists
+            final tempFile = File(localPath);
+            final exists = await tempFile.exists();
+            print('[DEBUG] Temp file exists: $exists');
+            if (exists) {
+              final fileSize = await tempFile.length();
+              print('[DEBUG] Temp file size: ${fileSize ~/ 1024}KB');
+            }
+
+            // Check if VoiceCacheManager is registered
+            final isRegistered = Get.isRegistered<VoiceCacheManager>();
+            print('[DEBUG] VoiceCacheManager registered: $isRegistered');
+
+            if (!isRegistered) {
+              print('[ChatController] ⚠️ VoiceCacheManager not registered!');
+              return;
+            }
+
+            final cacheManager = Get.find<VoiceCacheManager>();
+            print('[DEBUG] Got cache manager: ${cacheManager != null}');
+
+            final cached = await cacheManager.preCacheLocalFile(
+              messageId: messageId,
+              localFilePath: localPath,
+              audioUrl: audioUrl,
+            );
+            print('[DEBUG] Pre-cache result: $cached');
+
+            if (cached) {
+              print('[ChatController] ✅ Sender can play immediately!');
+            } else {
+              print('[ChatController] ⚠️ Pre-cache returned false');
+            }
+          } catch (e, stackTrace) {
+            print('[ChatController] ⚠️ Pre-cache error (non-fatal): $e');
+            print('[ChatController] Stack trace: $stackTrace');
+            // Non-fatal: User will download normally
+          }
+        }
 
         // Update chat metadata
         var message_res = await db
