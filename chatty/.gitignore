@@ -71,3 +71,34 @@ android/app/upload-keystore.jks
 sakoa-64c2e-firebase-adminsdk*.json
 chatty-best-firebase-adminsdk*.json
 
+# API Keys and Secrets
+lib/common/values/secret*.dart
+lib/**/secret*.dart
+*.secret.dart
+
+# Large media files (use git-lfs or cloud storage instead)
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Build artifacts and caches
+.gradle/
+android/.gradle/
+ios/.symlinks/
+ios/Pods/
+android/app/build/
+android/build/
+build/
+
+# Generated files that can be rebuilt
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# iOS
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/Generated.xcconfig
+ios/Runner.xcworkspace/xcuserdata/
+ios/Runner.xcodeproj/xcuserdata/
+

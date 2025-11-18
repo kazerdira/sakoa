@@ -30,7 +30,11 @@ chatty.codemain.top/composer.phar
 chatty.codemain.top/composer.lock
 chatty.codemain.top/public/hot
 chatty.codemain.top/public/storage
+chatty.codemain.top/public/uploads/
 chatty.codemain.top/storage/logs/*.log
+chatty.codemain.top/storage/framework/cache/
+chatty.codemain.top/storage/framework/sessions/
+chatty.codemain.top/storage/framework/views/
 
 # VS Code
 .vscode/
