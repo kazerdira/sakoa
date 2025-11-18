@@ -26,6 +26,8 @@ import 'package:sakoa/common/repositories/chat/text_message_repository.dart';
 import 'package:sakoa/common/repositories/chat/image_message_repository.dart';
 import 'package:sakoa/common/repositories/contact/contact_repository.dart';
 import 'package:sakoa/common/repositories/call/call_repository.dart';
+import 'package:sakoa/common/repositories/auth/auth_repository.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class Global {
   static Future init() async {
@@ -103,6 +105,13 @@ class Global {
     print('[Global] 🚀 Initializing CallRepository...');
     Get.put<CallRepository>(CallRepository(
       db: FirebaseFirestore.instance,
+    ));
+
+    // 🔐 Initialize Auth Repository
+    print('[Global] 🚀 Initializing AuthRepository...');
+    Get.put<AuthRepository>(AuthRepository(
+      firebaseAuth: FirebaseAuth.instance,
+      firestore: FirebaseFirestore.instance,
     ));
 
     print('[Global] ✅ All services initialized');
