@@ -1,25 +1,30 @@
-import 'package:sakoa/common/utils/FirebaseMassagingHandler.dart';
-import 'package:sakoa/firebase_options.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:get/get.dart';
+
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import 'package:sakoa/firebase_options.dart';
+import 'package:sakoa/common/utils/FirebaseMassagingHandler.dart';
+import 'package:sakoa/common/utils/utils.dart';
+import 'package:sakoa/common/store/store.dart';
+
 import 'package:sakoa/common/services/services.dart';
 import 'package:sakoa/common/services/presence_service.dart';
 import 'package:sakoa/common/services/chat_manager_service.dart';
 import 'package:sakoa/common/services/blocking_service.dart';
 import 'package:sakoa/common/services/chat_security_service.dart';
-import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 Voice messaging
-import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🔥 Voice cache manager
-import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
-import 'package:sakoa/common/repositories/chat/voice_message_repository.dart'; // � Voice message repository
-import 'package:sakoa/common/repositories/chat/text_message_repository.dart'; // 📝 Text message repository
-import 'package:sakoa/common/repositories/chat/image_message_repository.dart'; // 🖼️ Image message repository
-import 'package:sakoa/common/store/store.dart';
-import 'package:sakoa/common/utils/utils.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:get/get.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:sakoa/common/services/voice_message_service.dart';
+import 'package:sakoa/common/services/voice_cache_manager.dart';
+import 'package:sakoa/common/services/message_delivery_service.dart';
+
+import 'package:sakoa/common/repositories/chat/voice_message_repository.dart';
+import 'package:sakoa/common/repositories/chat/text_message_repository.dart';
+import 'package:sakoa/common/repositories/chat/image_message_repository.dart';
+import 'package:sakoa/common/repositories/contact/contact_repository.dart';
 
 class Global {
   static Future init() async {
@@ -27,9 +32,11 @@ class Global {
     await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     setSystemUi();
     Loading();
+
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+
     await Get.putAsync<StorageService>(() => StorageService().init());
     Get.put<ConfigStore>(ConfigStore());
     Get.put<UserStore>(UserStore());
@@ -51,11 +58,11 @@ class Global {
     print('[Global] 🚀 Initializing VoiceMessageService...');
     await Get.putAsync(() => VoiceMessageService().init());
 
-    // 🔥 SUPERNOVA: Initialize Voice Message Cache Service (Simpler & Better)
+    // 🔥 SUPERNOVA: Initialize Voice Message Cache Service
     print('[Global] 🚀 Initializing VoiceMessageCacheService...');
     await Get.putAsync(() => VoiceMessageCacheService().init());
 
-    // 🔥 Initialize VoiceCacheManager (needed by voice player)
+    // 🔥 Initialize VoiceCacheManager
     print('[Global] 🚀 Initializing VoiceCacheManager...');
     await Get.putAsync(() => VoiceCacheManager().init());
 
@@ -84,8 +91,14 @@ class Global {
       db: FirebaseFirestore.instance,
     ));
 
-    print(
-        '[Global] ✅ All services initialized (Presence, ChatManager, Blocking, Security, VoiceMessage, MessageDelivery, Chat Repositories)');
+    // 👥 Initialize Contact Repository
+    print('[Global] 🚀 Initializing ContactRepository...');
+    Get.put<ContactRepository>(ContactRepository(
+      db: FirebaseFirestore.instance,
+      blockingService: Get.find<BlockingService>(),
+    ));
+
+    print('[Global] ✅ All services initialized');
   }
 
   static void setSystemUi() {
