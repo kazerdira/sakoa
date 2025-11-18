@@ -19,7 +19,9 @@ import 'package:sakoa/common/widgets/block_settings_dialog.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 NEW: Voice messaging
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
 import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🎯 FIX #1: Pre-caching
-import 'package:sakoa/common/repositories/chat_repository.dart'; // 🏗️ REPOSITORY: Business logic layer
+import 'package:sakoa/common/repositories/chat/voice_message_repository.dart'; // � Voice message repository
+import 'package:sakoa/common/repositories/chat/text_message_repository.dart'; // 📝 Text message repository
+import 'package:sakoa/common/repositories/chat/image_message_repository.dart'; // 🖼️ Image message repository
 
 class ChatController extends GetxController {
   ChatController();
@@ -52,8 +54,10 @@ class ChatController extends GetxController {
   // 🔥 INDUSTRIAL-GRADE MESSAGE DELIVERY SERVICE
   late MessageDeliveryService _deliveryService;
 
-  // 🏗️ REPOSITORY: Business logic orchestrator
-  late ChatRepository _chatRepository;
+  // 🏗️ REPOSITORY LAYER: Domain-specific repositories
+  late VoiceMessageRepository _voiceMessageRepository;
+  late TextMessageRepository _textMessageRepository;
+  late ImageMessageRepository _imageMessageRepository;
 
   goMore() {
     state.more_status.value = state.more_status.value ? false : true;
@@ -187,6 +191,8 @@ class ChatController extends GetxController {
     clearReplyMode();
   }
 
+  /// 🖼️ Send image message using ImageMessageRepository
+  /// 🏗️ REFACTORED: Now uses ImageMessageRepository (thin controller pattern)
   sendImageMessage(String url) async {
     state.more_status.value = false;
 
@@ -196,54 +202,36 @@ class ChatController extends GetxController {
       return;
     }
 
-    print("---------------chat-----------------");
-    final content = Msgcontent(
-      token: token,
-      content: url,
-      type: "image",
-      addtime: Timestamp.now(),
-    );
+    // Validate token
+    if (token == null || token!.isEmpty) {
+      print('[ChatController] ❌ No user token available');
+      toastInfo(msg: "Unable to send message - user not authenticated");
+      return;
+    }
 
-    // 🔥 INDUSTRIAL-GRADE: Send with delivery tracking
-    final result = await _deliveryService.sendMessageWithTracking(
-      chatDocId: doc_id,
-      content: content,
-    );
+    try {
+      print('[ChatController] 🖼️ Sending image message...');
 
-    if (result.success || result.queued) {
-      print(
-          '[ChatController] ✅ Image sent: ${result.messageId} (queued: ${result.queued})');
+      // 🏗️ REPOSITORY: Delegate to image message repository
+      final result = await _imageMessageRepository.sendImageMessage(
+        chatDocId: doc_id,
+        senderToken: token!,
+        imageUrl: url,
+        reply: isReplyMode.value ? replyingTo.value : null,
+      );
 
-      // Update chat metadata
-      var message_res = await db
-          .collection("message")
-          .doc(doc_id)
-          .withConverter(
-            fromFirestore: Msg.fromFirestore,
-            toFirestore: (Msg msg, options) => msg.toFirestore(),
-          )
-          .get();
-      if (message_res.data() != null) {
-        var item = message_res.data()!;
-        int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
-        int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
-        if (item.from_token == token) {
-          from_msg_num = from_msg_num + 1;
-        } else {
-          to_msg_num = to_msg_num + 1;
-        }
-        await db.collection("message").doc(doc_id).update({
-          "to_msg_num": to_msg_num,
-          "from_msg_num": from_msg_num,
-          "last_msg": "【image】",
-          "last_time": Timestamp.now()
-        });
+      if (result.success || result.queued) {
+        print(
+            '[ChatController] ✅ Image sent: ${result.messageId} (queued: ${result.queued})');
+        sendNotifications("text");
+        clearReplyMode();
+      } else {
+        print('[ChatController] ❌ Image failed: ${result.error}');
+        toastInfo(msg: result.error ?? "Failed to send image");
       }
-
-      sendNotifications("text");
-    } else {
-      print('[ChatController] ❌ Image failed: ${result.error}');
-      toastInfo(msg: result.error ?? "Failed to send image");
+    } catch (e) {
+      print('[ChatController] ❌ Failed to send image: $e');
+      toastInfo(msg: "Failed to send image");
     }
   }
 
@@ -332,8 +320,8 @@ class ChatController extends GetxController {
       state.msgcontentList.insert(0, placeholderMessage);
       print('[ChatController] 🎨 Added placeholder with spinner');
 
-      // 🏗️ REPOSITORY: Delegate to repository (handles upload, pre-cache, metadata)
-      final result = await _chatRepository.sendVoiceMessage(
+      // 🏗️ REPOSITORY: Delegate to voice message repository
+      final result = await _voiceMessageRepository.sendVoiceMessage(
         chatDocId: doc_id,
         senderToken: token!,
         localPath: localPath,
@@ -852,9 +840,15 @@ class ChatController extends GetxController {
     _deliveryService = Get.find<MessageDeliveryService>();
     print('[ChatController] ✅ Delivery tracking service initialized');
 
-    // 🏗️ REPOSITORY LAYER
-    _chatRepository = Get.find<ChatRepository>();
-    print('[ChatController] ✅ Chat repository initialized');
+    // 🏗️ REPOSITORY LAYER: Domain-specific repositories
+    _voiceMessageRepository = Get.find<VoiceMessageRepository>();
+    print('[ChatController] ✅ Voice message repository initialized');
+
+    _textMessageRepository = Get.find<TextMessageRepository>();
+    print('[ChatController] ✅ Text message repository initialized');
+
+    _imageMessageRepository = Get.find<ImageMessageRepository>();
+    print('[ChatController] ✅ Image message repository initialized');
 
     clear_msg_num(doc_id);
   }

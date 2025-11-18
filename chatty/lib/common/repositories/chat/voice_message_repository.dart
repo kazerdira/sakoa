@@ -4,24 +4,28 @@ import 'package:sakoa/common/entities/entities.dart';
 import 'package:sakoa/common/services/message_delivery_service.dart';
 import 'package:sakoa/common/services/voice_message_service.dart';
 import 'package:sakoa/common/services/voice_cache_manager.dart';
+import 'package:sakoa/common/repositories/base/base_repository.dart';
 
-/// 🏗️ REPOSITORY PATTERN: Business logic for chat operations
+/// 🎤 VOICE MESSAGE REPOSITORY
 ///
-/// This repository orchestrates multiple services to handle complex chat operations.
-/// Controllers should call repository methods instead of services directly.
+/// Handles all voice message operations:
+/// - Recording and uploading voice messages
+/// - Pre-caching for instant sender playback
+/// - Delivery tracking and status updates
+/// - Chat metadata updates
 ///
-/// Benefits:
-/// - Thin controllers (only UI state management)
-/// - Testable business logic
-/// - Reusable operations
-/// - Single source of truth for chat operations
-class ChatRepository {
+/// This repository orchestrates VoiceMessageService, MessageDeliveryService,
+/// and VoiceCacheManager to provide a complete voice messaging solution.
+class VoiceMessageRepository extends BaseRepository {
   final MessageDeliveryService _deliveryService;
   final VoiceMessageService _voiceService;
   final VoiceCacheManager _cacheManager;
   final FirebaseFirestore _db;
 
-  ChatRepository({
+  @override
+  String get repositoryName => 'VoiceMessageRepository';
+
+  VoiceMessageRepository({
     required MessageDeliveryService deliveryService,
     required VoiceMessageService voiceService,
     required VoiceCacheManager cacheManager,
@@ -52,15 +56,15 @@ class ChatRepository {
     String? tempCopyPath;
 
     try {
-      print('[ChatRepository] 🎤 Starting voice message send...');
+      logInfo('Starting voice message send...');
 
       // Step 1: Copy file before upload (upload deletes it!)
-      print('[ChatRepository] 📋 Copying local file for pre-caching...');
+      logDebug('Copying local file for pre-caching...');
       tempCopyPath = '${localPath}_precache';
       await File(localPath).copy(tempCopyPath);
 
       // Step 2: Upload to Firebase Storage
-      print('[ChatRepository] ☁️ Uploading to Firebase Storage...');
+      logDebug('Uploading to Firebase Storage...');
       final audioUrl = await _voiceService.uploadVoiceMessage(localPath);
 
       if (audioUrl == null) {
@@ -78,7 +82,7 @@ class ChatRepository {
       );
 
       // Step 4: Send with delivery tracking
-      print('[ChatRepository] 📤 Sending to Firestore...');
+      logDebug('Sending to Firestore...');
       final result = await _deliveryService.sendMessageWithTracking(
         chatDocId: chatDocId,
         content: content,
@@ -89,13 +93,18 @@ class ChatRepository {
       }
 
       final messageId = result.messageId;
-      print(
-          '[ChatRepository] ✅ Message sent: $messageId (queued: ${result.queued})');
+      logSuccess('Message sent: $messageId (queued: ${result.queued})');
+
+      // 🔥 CRITICAL: Update placeholder ID IMMEDIATELY (before Firestore listener fires)
+      if (messageId != null) {
+        onMessageAdded(messageId);
+        logDebug('Notified controller: placeholder → $messageId');
+      }
 
       // Step 5: Pre-cache for instant sender playback
       if (messageId != null && messageId.isNotEmpty) {
         try {
-          print('[ChatRepository] 🎯 Pre-caching local recording...');
+          logDebug('Pre-caching local recording...');
           final cached = await _cacheManager.preCacheLocalFile(
             messageId: messageId,
             localFilePath: tempCopyPath,
@@ -103,12 +112,12 @@ class ChatRepository {
           );
 
           if (cached) {
-            print('[ChatRepository] ✅ Pre-cached successfully');
+            logSuccess('Pre-cached successfully');
           } else {
-            print('[ChatRepository] ⚠️ Pre-cache returned false');
+            logWarning('Pre-cache returned false');
           }
         } catch (e) {
-          print('[ChatRepository] ⚠️ Pre-cache error (non-fatal): $e');
+          logWarning('Pre-cache error (non-fatal): $e');
           // Non-fatal: User will download normally
         }
       }
@@ -120,112 +129,20 @@ class ChatRepository {
         lastMessage: "🎤 Voice message",
       );
 
-      // Notify controller that message was added (for UI updates)
-      if (messageId != null) {
-        onMessageAdded(messageId);
-      }
-
       return result;
     } catch (e, stackTrace) {
-      print('[ChatRepository] ❌ Voice message send failed: $e');
-      print('[ChatRepository] Stack trace: $stackTrace');
+      logError('Voice message send failed', e, stackTrace);
       return SendMessageResult.error(e.toString());
     } finally {
       // Clean up temp copy
       if (tempCopyPath != null) {
         try {
           await File(tempCopyPath).delete();
-          print('[ChatRepository] 🗑️ Cleaned up temp file');
+          logDebug('Cleaned up temp file');
         } catch (e) {
-          print('[ChatRepository] ⚠️ Failed to delete temp file: $e');
+          logWarning('Failed to delete temp file: $e');
         }
       }
-    }
-  }
-
-  /// 📝 Send text message with delivery tracking
-  Future<SendMessageResult> sendTextMessage({
-    required String chatDocId,
-    required String senderToken,
-    required String text,
-    MessageReply? reply,
-  }) async {
-    try {
-      print('[ChatRepository] 📝 Sending text message...');
-
-      final content = Msgcontent(
-        token: senderToken,
-        content: text,
-        type: "text",
-        addtime: Timestamp.now(),
-        reply: reply,
-      );
-
-      final result = await _deliveryService.sendMessageWithTracking(
-        chatDocId: chatDocId,
-        content: content,
-      );
-
-      if (result.success || result.queued) {
-        await _updateChatMetadata(
-          chatDocId: chatDocId,
-          senderToken: senderToken,
-          lastMessage: text,
-        );
-      }
-
-      return result;
-    } catch (e, stackTrace) {
-      print('[ChatRepository] ❌ Text message send failed: $e');
-      print('[ChatRepository] Stack trace: $stackTrace');
-      return SendMessageResult.error(e.toString());
-    }
-  }
-
-  /// 🖼️ Send image message with upload and delivery tracking
-  Future<SendMessageResult> sendImageMessage({
-    required String chatDocId,
-    required String senderToken,
-    required String imagePath,
-    MessageReply? reply,
-  }) async {
-    try {
-      print('[ChatRepository] 🖼️ Sending image message...');
-
-      // Upload image to Firebase Storage
-      // TODO: Extract to MediaService
-      final imageUrl = await _uploadImage(imagePath);
-
-      if (imageUrl == null) {
-        throw Exception('Failed to upload image');
-      }
-
-      final content = Msgcontent(
-        token: senderToken,
-        content: imageUrl,
-        type: "image",
-        addtime: Timestamp.now(),
-        reply: reply,
-      );
-
-      final result = await _deliveryService.sendMessageWithTracking(
-        chatDocId: chatDocId,
-        content: content,
-      );
-
-      if (result.success || result.queued) {
-        await _updateChatMetadata(
-          chatDocId: chatDocId,
-          senderToken: senderToken,
-          lastMessage: "📷 Image",
-        );
-      }
-
-      return result;
-    } catch (e, stackTrace) {
-      print('[ChatRepository] ❌ Image message send failed: $e');
-      print('[ChatRepository] Stack trace: $stackTrace');
-      return SendMessageResult.error(e.toString());
     }
   }
 
@@ -263,26 +180,11 @@ class ChatRepository {
           "last_time": Timestamp.now(),
         });
 
-        print('[ChatRepository] ✅ Chat metadata updated');
+        logSuccess('Chat metadata updated');
       }
     } catch (e) {
-      print('[ChatRepository] ⚠️ Failed to update chat metadata: $e');
+      logWarning('Failed to update chat metadata: $e');
       // Non-fatal: Don't throw, just log
-    }
-  }
-
-  /// 🖼️ Upload image to Firebase Storage
-  /// TODO: Extract to MediaService
-  Future<String?> _uploadImage(String imagePath) async {
-    try {
-      // TODO: Implement image upload
-      // For now, this is a placeholder
-      print(
-          '[ChatRepository] ⚠️ Image upload not yet implemented in repository');
-      return null;
-    } catch (e) {
-      print('[ChatRepository] ❌ Image upload failed: $e');
-      return null;
     }
   }
 }

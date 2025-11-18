@@ -1,6 +1,10 @@
-/// 🚨 EXCEPTION HANDLING LAYER
+import 'base_exception.dart';
+
+/// 🚨 CHAT EXCEPTION LAYER
 ///
 /// Centralized exception types for the chat domain.
+/// All chat exceptions extend BaseException for consistent error handling.
+///
 /// Benefits:
 /// - Type-safe error handling
 /// - Consistent error messages
@@ -8,26 +12,14 @@
 /// - Better user feedback
 
 /// Base exception for all chat-related errors
-abstract class ChatException implements Exception {
-  final String message;
-  final String? code;
-  final dynamic originalError;
-  final StackTrace? stackTrace;
-
+abstract class ChatException extends BaseException {
   ChatException({
-    required this.message,
-    this.code,
-    this.originalError,
-    this.stackTrace,
+    required super.message,
+    super.code,
+    super.originalError,
+    super.stackTrace,
+    super.context,
   });
-
-  @override
-  String toString() {
-    if (code != null) {
-      return 'ChatException [$code]: $message';
-    }
-    return 'ChatException: $message';
-  }
 }
 
 /// Voice message specific exceptions
