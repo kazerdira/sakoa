@@ -25,6 +25,7 @@ import 'package:sakoa/common/repositories/chat/voice_message_repository.dart';
 import 'package:sakoa/common/repositories/chat/text_message_repository.dart';
 import 'package:sakoa/common/repositories/chat/image_message_repository.dart';
 import 'package:sakoa/common/repositories/contact/contact_repository.dart';
+import 'package:sakoa/common/repositories/call/call_repository.dart';
 
 class Global {
   static Future init() async {
@@ -96,6 +97,12 @@ class Global {
     Get.put<ContactRepository>(ContactRepository(
       db: FirebaseFirestore.instance,
       blockingService: Get.find<BlockingService>(),
+    ));
+
+    // 📞 Initialize Call Repository
+    print('[Global] 🚀 Initializing CallRepository...');
+    Get.put<CallRepository>(CallRepository(
+      db: FirebaseFirestore.instance,
     ));
 
     print('[Global] ✅ All services initialized');
