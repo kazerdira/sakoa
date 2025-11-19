@@ -920,91 +920,26 @@ class ContactController extends GetxController {
       // Immediately update UI optimistically
       state.relationshipStatus[user.token!] = 'pending_sent';
 
-      // Check if contact already exists (I added them)
-      var existingOutgoing = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: token)
-          .where("contact_token", isEqualTo: user.token)
-          .get();
-
-      if (existingOutgoing.docs.isNotEmpty) {
-        var status = existingOutgoing.docs.first.data()['status'];
-        EasyLoading.dismiss();
-
-        if (status == 'accepted') {
-          toastInfo(msg: "✓ Already in your contacts");
-          state.relationshipStatus[user.token!] = 'accepted';
-        } else if (status == 'pending') {
-          toastInfo(msg: "⏳ Request already sent");
-          state.relationshipStatus[user.token!] = 'pending_sent';
-        } else if (status == 'blocked') {
-          toastInfo(msg: "🚫 You have blocked this user. Unblock to add.");
-          state.relationshipStatus[user.token!] = 'blocked';
-        }
-        return false;
-      }
-
-      // Check if contact already exists (they added me)
-      var existingIncoming = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: user.token)
-          .where("contact_token", isEqualTo: token)
-          .get();
-
-      if (existingIncoming.docs.isNotEmpty) {
-        var status = existingIncoming.docs.first.data()['status'];
-        EasyLoading.dismiss();
-
-        if (status == 'accepted') {
-          toastInfo(msg: "✓ Already in your contacts");
-          state.relationshipStatus[user.token!] = 'accepted';
-        } else if (status == 'pending') {
-          toastInfo(
-              msg: "📬 This user sent you a request! Check 'Requests' tab");
-          state.relationshipStatus[user.token!] = 'pending_received';
-          // Switch to requests tab
-          state.selectedTab.value = 1;
-        } else if (status == 'blocked') {
-          toastInfo(msg: "🚫 This user has blocked you");
-          state.relationshipStatus[user.token!] = 'blocked_by';
-        }
-        return false;
-      }
-
-      // Send the request
-      var myProfile = UserStore.to.profile;
-
       print("========================================");
       print("[ContactController] 📤 SENDING CONTACT REQUEST");
-      print("[ContactController] 📤 From: ${myProfile.name} (token: '$token')");
       print("[ContactController] 📤 To: ${user.name} (token: '${user.token}')");
-      print("[ContactController] 📤 Writing to Firestore...");
 
-      var contactData = {
-        "user_token": token,
-        "contact_token": user.token,
-        "user_name": myProfile.name,
-        "user_avatar": myProfile.avatar,
-        "user_online":
-            myProfile.online ?? 0, // ✅ Default to offline, not online!
-        "contact_name": user.name,
-        "contact_avatar": user.avatar,
-        "contact_online": user.online ?? 0, // ✅ Default to offline, not online!
-        "status": "pending",
-        "requested_by": token,
-        "requested_at": Timestamp.now(),
-      };
+      // Use repository to send contact request
+      final success = await _contactRepository.sendContactRequest(
+        recipientToken: user.token!,
+        recipientName: user.name ?? '',
+        recipientAvatar: user.avatar ?? '',
+      );
 
-      print("[ContactController] 📤 Data: $contactData");
+      if (!success) {
+        EasyLoading.dismiss();
+        toastInfo(msg: "⏳ Request already sent or user unavailable");
+        return false;
+      }
 
-      var docRef = await db.collection("contacts").add(contactData);
+      print("[ContactController] ✅ Request saved to Firestore!");
 
-      print(
-          "[ContactController] ✅ Request saved to Firestore! Doc ID: ${docRef.id}");
-      print(
-          "[ContactController] 📤 Receiver should see: contact_token='${user.token}', status='pending'");
-
-      // Send push notification to the receiver (following call_notifications pattern)
+      // Send push notification to the receiver
       try {
         print(
             "[ContactController] 🔔 Sending contact request notification to ${user.token}");
@@ -1013,7 +948,6 @@ class ContactController extends GetxController {
         notificationEntity.to_token = user.token;
         notificationEntity.to_name = user.name;
         notificationEntity.to_avatar = user.avatar;
-        // No need to set call_type - backend will use 'contact_request'
 
         var res = await ChatAPI.send_contact_request_notification(
             params: notificationEntity);
@@ -1070,12 +1004,13 @@ class ContactController extends GetxController {
       // Optimistically update UI
       state.relationshipStatus[contact.user_token!] = 'accepted';
 
-      await db.collection("contacts").doc(contact.id).update({
-        "status": "accepted",
-        "accepted_at": Timestamp.now(),
-      });
+      // Use repository to accept contact request
+      await _contactRepository.acceptContactRequest(
+        contactDocId: contact.id!,
+        requesterToken: contact.user_token!,
+      );
 
-      // Send push notification to the original requester (following call_notifications pattern)
+      // Send push notification to the original requester
       try {
         print(
             "[ContactController] 🔔 Sending contact accepted notification to ${contact.user_token}");
@@ -1084,7 +1019,6 @@ class ContactController extends GetxController {
         notificationEntity.to_token = contact.user_token;
         notificationEntity.to_name = contact.user_name;
         notificationEntity.to_avatar = contact.user_avatar;
-        // No need to set call_type - backend will use 'contact_accepted'
 
         var res = await ChatAPI.send_contact_accepted_notification(
             params: notificationEntity);
@@ -1142,7 +1076,8 @@ class ContactController extends GetxController {
     try {
       EasyLoading.show(status: 'Rejecting...');
 
-      await db.collection("contacts").doc(contact.id).delete();
+      // Use repository to reject contact request
+      await _contactRepository.rejectContactRequest(contact.id!);
 
       EasyLoading.dismiss();
       toastInfo(msg: "✓ Request from ${contact.user_name} rejected");
@@ -1214,45 +1149,12 @@ class ContactController extends GetxController {
   Future<void> blockUser(
       String contactToken, String contactName, String contactAvatar) async {
     try {
-      // Check for existing relationship in BOTH directions
-      var outgoingQuery = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: token)
-          .where("contact_token", isEqualTo: contactToken)
-          .get();
-
-      var incomingQuery = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: contactToken)
-          .where("contact_token", isEqualTo: token)
-          .get();
-
-      // Delete incoming relationship (they added me)
-      if (incomingQuery.docs.isNotEmpty) {
-        for (var doc in incomingQuery.docs) {
-          await db.collection("contacts").doc(doc.id).delete();
-        }
-      }
-
-      // Update or create outgoing relationship as blocked
-      if (outgoingQuery.docs.isNotEmpty) {
-        await db
-            .collection("contacts")
-            .doc(outgoingQuery.docs.first.id)
-            .update({
-          "status": "blocked",
-          "blocked_at": Timestamp.now(),
-        });
-      } else {
-        await db.collection("contacts").add({
-          "user_token": token,
-          "contact_token": contactToken,
-          "contact_name": contactName,
-          "contact_avatar": contactAvatar,
-          "status": "blocked",
-          "blocked_at": Timestamp.now(),
-        });
-      }
+      // Use repository to block user
+      await _contactRepository.blockUser(
+        userToken: contactToken,
+        userName: contactName,
+        userAvatar: contactAvatar,
+      );
 
       // Remove from accepted contacts list immediately (smooth deletion)
       state.acceptedContacts
@@ -1261,7 +1163,7 @@ class ContactController extends GetxController {
       // Update relationship map
       state.relationshipStatus[contactToken] = 'blocked';
 
-      // Add to blocked list
+      // Reload blocked list
       await loadBlockedUsers();
 
       toastInfo(msg: "$contactName has been blocked");
@@ -1274,9 +1176,17 @@ class ContactController extends GetxController {
   /// Unblock user
   Future<void> unblockUser(ContactEntity contact) async {
     try {
-      await db.collection("contacts").doc(contact.id).delete();
-      toastInfo(msg: "${contact.contact_name} has been unblocked");
-      await loadBlockedUsers();
+      // Use repository to unblock user
+      if (contact.contact_token != null) {
+        await _contactRepository.unblockUser(contact.contact_token!);
+        toastInfo(msg: "${contact.contact_name} has been unblocked");
+
+        // Remove from relationship map
+        state.relationshipStatus.remove(contact.contact_token!);
+
+        // Reload blocked list
+        await loadBlockedUsers();
+      }
     } catch (e) {
       print("[ContactController] Error unblocking user: $e");
       toastInfo(msg: "Failed to unblock user");
