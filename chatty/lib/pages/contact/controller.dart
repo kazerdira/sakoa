@@ -8,6 +8,7 @@ import 'package:sakoa/common/entities/contact_entity.dart';
 import 'package:sakoa/common/store/store.dart';
 import 'package:sakoa/common/widgets/toast.dart';
 import 'package:sakoa/common/services/presence_service.dart';
+import 'package:sakoa/common/repositories/contact/contact_repository.dart';
 import 'index.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -17,6 +18,7 @@ class ContactController extends GetxController {
   final db = FirebaseFirestore.instance;
   final _cache =
       GetStorage('contacts_cache'); // ✨ Fast caching (20-30x faster!)
+  final _contactRepository = Get.find<ContactRepository>();
 
   // ✅ CRITICAL FIX: Use profile.token for Firestore queries!
   // UserStore.to.token = access_token (JWT for API, changes on login)
@@ -732,55 +734,17 @@ class ContactController extends GetxController {
   Future<void> loadPendingRequests() async {
     try {
       print("========================================");
-      print("[ContactController] � LOADING PENDING REQUESTS");
+      print("[ContactController] 📥 LOADING PENDING REQUESTS");
       print("[ContactController] 📥 My token: '$token'");
-      print("[ContactController] 📥 Querying Firestore...");
 
-      var requests = await db
-          .collection("contacts")
-          .where("contact_token", isEqualTo: token)
-          .where("status", isEqualTo: "pending")
-          .get();
+      // Use repository to fetch pending requests
+      final requests = await _contactRepository.getPendingRequests();
+
+      state.pendingRequests.value = requests;
+      state.pendingRequestCount.value = requests.length;
 
       print(
-          "[ContactController] 📬 Query returned ${requests.docs.length} documents");
-
-      // Debug: Show ALL contacts to see what's in Firestore
-      var allMyIncoming = await db
-          .collection("contacts")
-          .where("contact_token", isEqualTo: token)
-          .get();
-      print(
-          "[ContactController] � ALL incoming contacts (any status): ${allMyIncoming.docs.length}");
-      for (var doc in allMyIncoming.docs) {
-        var data = doc.data();
-        print(
-            "   📧 From: ${data['user_name']} (${data['user_token']}), Status: ${data['status']}");
-      }
-
-      state.pendingRequests.clear();
-
-      for (var doc in requests.docs) {
-        var data = doc.data();
-        print(
-            "[ContactController] 📬 Request from: ${data['user_name']} (${data['user_token']})");
-
-        var contact = ContactEntity(
-          id: doc.id,
-          user_token: data['user_token'],
-          contact_token: data['contact_token'],
-          user_name: data['user_name'],
-          user_avatar: data['user_avatar'],
-          contact_name: data['contact_name'],
-          contact_avatar: data['contact_avatar'],
-          status: data['status'],
-          requested_by: data['requested_by'],
-          requested_at: data['requested_at'],
-        );
-        state.pendingRequests.add(contact);
-      }
-
-      state.pendingRequestCount.value = state.pendingRequests.length;
+          "[ContactController] 📬 Loaded ${requests.length} pending requests");
       print(
           "[ContactController] 📬 Badge count updated to: ${state.pendingRequestCount.value}");
 
@@ -800,31 +764,11 @@ class ContactController extends GetxController {
     try {
       print("[ContactController] Loading sent requests");
 
-      var requests = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: token)
-          .where("status", isEqualTo: "pending")
-          .get();
+      // Use repository to fetch sent requests
+      final requests = await _contactRepository.getSentRequests();
 
-      state.sentRequests.clear();
-
-      for (var doc in requests.docs) {
-        var data = doc.data();
-        var contact = ContactEntity(
-          id: doc.id,
-          user_token: data['user_token'],
-          contact_token: data['contact_token'],
-          contact_name: data['contact_name'],
-          contact_avatar: data['contact_avatar'],
-          contact_online: data['contact_online'],
-          status: data['status'],
-          requested_by: data['requested_by'],
-          requested_at: data['requested_at'],
-        );
-        state.sentRequests.add(contact);
-      }
-
-      print("[ContactController] Sent requests: ${state.sentRequests.length}");
+      state.sentRequests.value = requests;
+      print("[ContactController] Loaded ${requests.length} sent requests");
     } catch (e) {
       print("[ContactController] Error loading sent requests: $e");
     }
@@ -835,27 +779,11 @@ class ContactController extends GetxController {
     try {
       print("[ContactController] Loading blocked users");
 
-      var blocked = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: token)
-          .where("status", isEqualTo: "blocked")
-          .get();
+      // Use repository to fetch blocked users
+      final blocked = await _contactRepository.getBlockedUsers();
 
-      state.blockedList.clear();
-
-      for (var doc in blocked.docs) {
-        var data = doc.data();
-        var contact = ContactEntity(
-          id: doc.id,
-          user_token: data['user_token'],
-          contact_token: data['contact_token'],
-          contact_name: data['contact_name'],
-          contact_avatar: data['contact_avatar'],
-          status: data['status'],
-          blocked_at: data['blocked_at'],
-        );
-        state.blockedList.add(contact);
-      }
+      state.blockedList.value = blocked;
+      print("[ContactController] Loaded ${blocked.length} blocked users");
     } catch (e) {
       print("[ContactController] Error loading blocked users: $e");
     }
