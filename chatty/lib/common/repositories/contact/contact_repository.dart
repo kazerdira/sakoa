@@ -65,17 +65,26 @@ class ContactRepository extends BaseRepository {
   }
 
   /// Load pending incoming contact requests
-  Future<List<ContactEntity>> getPendingRequests() async {
+  Future<List<ContactEntity>> getPendingRequests({
+    int limit = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
     try {
-      logDebug('Loading pending incoming requests for token: $_myToken');
+      logDebug(
+          'Loading pending incoming requests for token: $_myToken (limit: $limit)');
 
-      final snapshot = await _db
+      Query<Map<String, dynamic>> query = _db
           .collection("contacts")
           .where("contact_token", isEqualTo: _myToken)
           .where("status", isEqualTo: "pending")
-          // NOTE: Removed orderBy to avoid Firestore composite index requirement
-          // Requests will be returned in insertion order (usually newest last)
-          .get();
+          .limit(limit);
+
+      // Add pagination if provided
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
 
       print(
           '[ContactRepository] 📊 Query returned ${snapshot.docs.length} documents');
@@ -117,16 +126,25 @@ class ContactRepository extends BaseRepository {
   }
 
   /// Load sent contact requests (outgoing pending)
-  Future<List<ContactEntity>> getSentRequests() async {
+  Future<List<ContactEntity>> getSentRequests({
+    int limit = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
     try {
-      logDebug('Loading sent requests');
+      logDebug('Loading sent requests (limit: $limit)');
 
-      final snapshot = await _db
+      Query<Map<String, dynamic>> query = _db
           .collection("contacts")
           .where("user_token", isEqualTo: _myToken)
           .where("status", isEqualTo: "pending")
-          // NOTE: Removed orderBy to avoid Firestore composite index requirement
-          .get();
+          .limit(limit);
+
+      // Add pagination if provided
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
 
       final requests = snapshot.docs
           .map((doc) => ContactEntity.fromFirestore(
@@ -158,16 +176,25 @@ class ContactRepository extends BaseRepository {
   }
 
   /// Load blocked users
-  Future<List<ContactEntity>> getBlockedUsers() async {
+  Future<List<ContactEntity>> getBlockedUsers({
+    int limit = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
     try {
-      logDebug('Loading blocked users');
+      logDebug('Loading blocked users (limit: $limit)');
 
-      final snapshot = await _db
+      Query<Map<String, dynamic>> query = _db
           .collection("contacts")
           .where("user_token", isEqualTo: _myToken)
           .where("status", isEqualTo: "blocked")
-          // NOTE: Removed orderBy to avoid Firestore composite index requirement
-          .get();
+          .limit(limit);
+
+      // Add pagination if provided
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
 
       final blocked = snapshot.docs
           .map((doc) => ContactEntity.fromFirestore(

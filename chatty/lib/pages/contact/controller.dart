@@ -733,15 +733,40 @@ class ContactController extends GetxController {
     }
   }
 
-  /// Load pending contact requests received
-  Future<void> loadPendingRequests() async {
+  /// Load pending contact requests received with pagination support
+  Future<void> loadPendingRequests({bool loadMore = false}) async {
+    // Prevent duplicate loading
+    if (state.isLoadingRequests.value) {
+      print(
+          "[ContactController] ⏸️ Already loading pending requests, skipping...");
+      return;
+    }
+
+    // If no more data, don't load
+    if (loadMore && !state.hasMoreRequests.value) {
+      print("[ContactController] 📭 No more pending requests to load");
+      return;
+    }
+
     try {
+      state.isLoadingRequests.value = true;
+
+      if (!loadMore) {
+        // Reset pagination on fresh load
+        state.lastRequestDoc = null;
+        state.hasMoreRequests.value = true;
+      }
+
       print("========================================");
-      print("[ContactController] 📥 LOADING PENDING REQUESTS");
+      print(
+          "[ContactController] 📥 LOADING PENDING REQUESTS (loadMore: $loadMore)");
       print("[ContactController] 📥 My token: '$token'");
 
-      // Use repository to fetch pending requests
-      final requests = await _contactRepository.getPendingRequests();
+      // Use repository to fetch pending requests with pagination
+      final requests = await _contactRepository.getPendingRequests(
+        limit: ContactState.REQUESTS_PAGE_SIZE,
+        startAfter: loadMore ? state.lastRequestDoc : null,
+      );
 
       print(
           "[ContactController] 📦 Repository returned ${requests.length} requests");
@@ -755,15 +780,37 @@ class ContactController extends GetxController {
             "[ContactController] 📬 Request ID: ${first.id}, Status: ${first.status}");
       }
 
-      state.pendingRequests.value = requests;
-      state.pendingRequestCount.value = requests.length;
+      if (loadMore) {
+        // Append to existing list
+        state.pendingRequests.addAll(requests);
+      } else {
+        // Replace list
+        state.pendingRequests.value = requests;
+      }
+
+      // Update pagination state
+      if (requests.length < ContactState.REQUESTS_PAGE_SIZE) {
+        state.hasMoreRequests.value = false;
+      }
+
+      // Store last document for pagination
+      if (requests.isNotEmpty) {
+        // Get the Firestore document for the last request
+        final lastRequestId = requests.last.id;
+        if (lastRequestId != null) {
+          final lastDoc =
+              await db.collection("contacts").doc(lastRequestId).get();
+          state.lastRequestDoc = lastDoc;
+        }
+      }
+
+      state.pendingRequestCount.value = state.pendingRequests.length;
 
       print(
           "[ContactController] 📬 Loaded ${requests.length} pending requests");
       print(
-          "[ContactController] 📬 Badge count updated to: ${state.pendingRequestCount.value}");
-      print(
-          "[ContactController] 📬 State list length: ${state.pendingRequests.length}");
+          "[ContactController] 📬 Total in list: ${state.pendingRequests.length}");
+      print("[ContactController] 📬 Has more: ${state.hasMoreRequests.value}");
 
       // ✅ Force UI update
       state.pendingRequests.refresh();
@@ -773,36 +820,128 @@ class ContactController extends GetxController {
     } catch (e) {
       print("[ContactController] ❌ Error loading requests: $e");
       print("[ContactController] ❌ Error details: ${e.toString()}");
+    } finally {
+      state.isLoadingRequests.value = false;
     }
   }
 
-  /// Load sent contact requests (outgoing pending)
-  Future<void> loadSentRequests() async {
+  /// Load sent contact requests (outgoing pending) with pagination support
+  Future<void> loadSentRequests({bool loadMore = false}) async {
+    // Prevent duplicate loading
+    if (state.isLoadingRequests.value) {
+      print(
+          "[ContactController] ⏸️ Already loading sent requests, skipping...");
+      return;
+    }
+
+    // If no more data, don't load
+    if (loadMore && !state.hasMoreRequests.value) {
+      print("[ContactController] 📭 No more sent requests to load");
+      return;
+    }
+
     try {
-      print("[ContactController] Loading sent requests");
+      state.isLoadingRequests.value = true;
 
-      // Use repository to fetch sent requests
-      final requests = await _contactRepository.getSentRequests();
+      print("[ContactController] Loading sent requests (loadMore: $loadMore)");
 
-      state.sentRequests.value = requests;
-      print("[ContactController] Loaded ${requests.length} sent requests");
+      // Use repository to fetch sent requests with pagination
+      final requests = await _contactRepository.getSentRequests(
+        limit: ContactState.REQUESTS_PAGE_SIZE,
+        startAfter: loadMore ? state.lastRequestDoc : null,
+      );
+
+      if (loadMore) {
+        // Append to existing list
+        state.sentRequests.addAll(requests);
+      } else {
+        // Replace list
+        state.sentRequests.value = requests;
+        state.lastRequestDoc = null;
+        state.hasMoreRequests.value = true;
+      }
+
+      // Update pagination state
+      if (requests.length < ContactState.REQUESTS_PAGE_SIZE) {
+        state.hasMoreRequests.value = false;
+      }
+
+      // Store last document for pagination
+      if (requests.isNotEmpty) {
+        final lastRequestId = requests.last.id;
+        if (lastRequestId != null) {
+          final lastDoc =
+              await db.collection("contacts").doc(lastRequestId).get();
+          state.lastRequestDoc = lastDoc;
+        }
+      }
+
+      print(
+          "[ContactController] Loaded ${requests.length} sent requests (Total: ${state.sentRequests.length})");
     } catch (e) {
       print("[ContactController] Error loading sent requests: $e");
+    } finally {
+      state.isLoadingRequests.value = false;
     }
   }
 
-  /// Load blocked users
-  Future<void> loadBlockedUsers() async {
+  /// Load blocked users with pagination support
+  Future<void> loadBlockedUsers({bool loadMore = false}) async {
+    // Prevent duplicate loading
+    if (state.isLoadingBlocked.value) {
+      print(
+          "[ContactController] ⏸️ Already loading blocked users, skipping...");
+      return;
+    }
+
+    // If no more data, don't load
+    if (loadMore && !state.hasMoreBlocked.value) {
+      print("[ContactController] 📭 No more blocked users to load");
+      return;
+    }
+
     try {
-      print("[ContactController] Loading blocked users");
+      state.isLoadingBlocked.value = true;
 
-      // Use repository to fetch blocked users
-      final blocked = await _contactRepository.getBlockedUsers();
+      print("[ContactController] Loading blocked users (loadMore: $loadMore)");
 
-      state.blockedList.value = blocked;
-      print("[ContactController] Loaded ${blocked.length} blocked users");
+      // Use repository to fetch blocked users with pagination
+      final blocked = await _contactRepository.getBlockedUsers(
+        limit: ContactState.BLOCKED_PAGE_SIZE,
+        startAfter: loadMore ? state.lastBlockedDoc : null,
+      );
+
+      if (loadMore) {
+        // Append to existing list
+        state.blockedList.addAll(blocked);
+      } else {
+        // Replace list
+        state.blockedList.value = blocked;
+        state.lastBlockedDoc = null;
+        state.hasMoreBlocked.value = true;
+      }
+
+      // Update pagination state
+      if (blocked.length < ContactState.BLOCKED_PAGE_SIZE) {
+        state.hasMoreBlocked.value = false;
+      }
+
+      // Store last document for pagination
+      if (blocked.isNotEmpty) {
+        final lastBlockedId = blocked.last.id;
+        if (lastBlockedId != null) {
+          final lastDoc =
+              await db.collection("contacts").doc(lastBlockedId).get();
+          state.lastBlockedDoc = lastDoc;
+        }
+      }
+
+      print(
+          "[ContactController] Loaded ${blocked.length} blocked users (Total: ${state.blockedList.length})");
     } catch (e) {
       print("[ContactController] Error loading blocked users: $e");
+    } finally {
+      state.isLoadingBlocked.value = false;
     }
   }
 
