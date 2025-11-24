@@ -9,7 +9,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 // 🔥 Voice & Reply widgets
 import 'package:sakoa/pages/message/chat/widgets/voice_recording_widget.dart';
 import 'package:sakoa/pages/message/chat/widgets/reply_preview_widget.dart';
-import 'package:sakoa/pages/message/chat/widgets/slide_to_cancel.dart';
 
 class ChatPage extends GetView<ChatController> {
   AppBar _buildAppBar() {
@@ -256,24 +255,17 @@ class ChatPage extends GetView<ChatController> {
                     child: controller.isBlocked.value
                         ? _buildDisabledInput()
                         : controller.isRecordingVoice.value
-                            ? SlideToCancel(
-                                onCancel: () {
-                                  controller.recordingCancelled.value = true;
-                                },
-                                child: Container(
-                                  width: 360.w,
-                                  height: 70.h,
-                                  padding: EdgeInsets.only(
-                                    left: 20.w,
-                                    right: 20.w,
-                                    bottom: 10.h,
-                                    top: 10.h,
-                                  ),
-                                  color: AppColors.primaryBackground,
-                                  child: VoiceRecordingWidget(
-                                    onSend: controller.stopAndSendVoiceMessage,
-                                    onCancel: controller.cancelVoiceRecording,
-                                  ),
+                            ? Container(
+                                width: 360.w,
+                                height: 85.h,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 10.w,
+                                  vertical: 8.h,
+                                ),
+                                color: AppColors.primaryBackground,
+                                child: VoiceRecordingWidget(
+                                  onSend: controller.stopAndSendVoiceMessage,
+                                  onCancel: controller.cancelVoiceRecording,
                                 ),
                               )
                             : Container(
