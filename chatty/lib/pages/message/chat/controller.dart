@@ -308,29 +308,12 @@ class ChatController extends GetxController {
         duration: _voiceService.recordingDuration.value,
         reply: isReplyMode.value ? replyingTo.value : null,
         onMessageAdded: (messageId) {
-          // 🔄 REPLACE placeholder with real message ID (prevents duplicate from Firestore)
-          final index =
-              state.msgcontentList.indexWhere((msg) => msg.id == tempId);
-          if (index != -1) {
-            final placeholder = state.msgcontentList[index];
-            state.msgcontentList[index] = Msgcontent(
-              id: messageId,
-              token: placeholder.token,
-              content: placeholder.content,
-              type: placeholder.type,
-              addtime: placeholder.addtime,
-              voice_duration: placeholder.voice_duration,
-              delivery_status: 'sent',
-              reply: placeholder.reply,
-              sent_at: placeholder.sent_at,
-              delivered_at: placeholder.delivered_at,
-              read_at: placeholder.read_at,
-              retry_count: placeholder.retry_count,
-            );
-            state.msgcontentList.refresh();
-            print(
-                '[ChatController] 🔄 Replaced placeholder ID: $tempId → $messageId');
-          }
+          // � CRITICAL FIX: Remove placeholder instead of updating
+          // Firestore listener will add the real message with all correct data
+          print('[ChatController] 🗑️ Removing placeholder: $tempId');
+          state.msgcontentList.removeWhere((msg) => msg.id == tempId);
+          print(
+              '[ChatController] ✅ Placeholder removed, waiting for Firestore listener to add real message: $messageId');
         },
       );
 
@@ -850,11 +833,19 @@ class ChatController extends GetxController {
               if (change.doc.data() != null) {
                 final msg = change.doc.data()!;
 
-                // 🔥 SKIP duplicates (avoid duplicates from placeholder)
-                if (msg.id != null &&
-                    state.msgcontentList.any((m) => m.id == msg.id)) {
-                  print('[ChatController] ⏭️ Skipping duplicate: ${msg.id}');
-                  continue;
+                // 🔥 SKIP duplicates - check by ID and also by temp ID pattern
+                if (msg.id != null) {
+                  // Check if already in list (by real ID or temp ID)
+                  final isDuplicate = state.msgcontentList.any((m) =>
+                      m.id == msg.id ||
+                      (m.id != null &&
+                          m.id!.startsWith('temp_') &&
+                          msg.id == m.id));
+
+                  if (isDuplicate) {
+                    print('[ChatController] ⏭️ Skipping duplicate: ${msg.id}');
+                    continue;
+                  }
                 }
 
                 // 🔥 BLOCK incoming messages from blocked users
