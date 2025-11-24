@@ -53,8 +53,11 @@ class ContactController extends GetxController {
         .where("contact_token", isEqualTo: token)
         .snapshots()
         .listen((snapshot) {
+      print(
+          "[ContactController] 🔔 Incoming contacts changed (${snapshot.docs.length} docs)");
       _updateRelationshipMap();
       loadPendingRequests();
+      loadAcceptedContacts(); // Also reload accepted contacts in case status changed
     }, onError: (error) {
       print("[ContactController] ❌ Error in requests listener: $error");
     });
@@ -740,6 +743,18 @@ class ContactController extends GetxController {
       // Use repository to fetch pending requests
       final requests = await _contactRepository.getPendingRequests();
 
+      print(
+          "[ContactController] 📦 Repository returned ${requests.length} requests");
+
+      // Debug: Print first request details if available
+      if (requests.isNotEmpty) {
+        final first = requests.first;
+        print(
+            "[ContactController] 📬 First request: ${first.user_name} (${first.user_token})");
+        print(
+            "[ContactController] 📬 Request ID: ${first.id}, Status: ${first.status}");
+      }
+
       state.pendingRequests.value = requests;
       state.pendingRequestCount.value = requests.length;
 
@@ -747,6 +762,8 @@ class ContactController extends GetxController {
           "[ContactController] 📬 Loaded ${requests.length} pending requests");
       print(
           "[ContactController] 📬 Badge count updated to: ${state.pendingRequestCount.value}");
+      print(
+          "[ContactController] 📬 State list length: ${state.pendingRequests.length}");
 
       // ✅ Force UI update
       state.pendingRequests.refresh();
@@ -800,106 +817,14 @@ class ContactController extends GetxController {
     try {
       print("[ContactController] Searching for: $query");
       state.isSearching.value = true;
-      String searchLower = query.toLowerCase().trim();
 
-      // Get all existing ACCEPTED contacts to filter them out from search
-      // We KEEP pending/blocked in search so users can see button states
-      Set<String> acceptedContactTokens = {};
+      // Use repository to search users
+      final results = await _contactRepository.searchUsers(query, limit: 20);
 
-      // Get accepted contacts where I'm the user
-      var myAccepted = await db
-          .collection("contacts")
-          .where("user_token", isEqualTo: token)
-          .where("status", isEqualTo: "accepted")
-          .get();
-      for (var doc in myAccepted.docs) {
-        acceptedContactTokens.add(doc.data()['contact_token']);
-      }
-
-      // Get accepted contacts where I'm the contact
-      var theirAccepted = await db
-          .collection("contacts")
-          .where("contact_token", isEqualTo: token)
-          .where("status", isEqualTo: "accepted")
-          .get();
-      for (var doc in theirAccepted.docs) {
-        acceptedContactTokens.add(doc.data()['user_token']);
-      }
-
-      // Get all user profiles (we'll filter client-side for better matching)
-      var allUsers = await db
-          .collection("user_profiles")
-          .limit(100) // Get more results for better client-side filtering
-          .get();
-
-      state.searchResults.clear();
-      List<UserProfile> tempResults = [];
-
-      for (var doc in allUsers.docs) {
-        var data = doc.data();
-
-        // Skip current user
-        if (data['token'] == token) continue;
-
-        // Only skip users who are ACCEPTED friends (show pending/blocked with buttons)
-        if (acceptedContactTokens.contains(data['token'])) continue;
-        String name = (data['name'] ?? '').toLowerCase();
-        String searchName = (data['search_name'] ?? '').toLowerCase();
-
-        // Search only by name (not email)
-        bool matchesName = name.contains(searchLower);
-        bool matchesSearchName = searchName.startsWith(searchLower);
-
-        if (matchesName || matchesSearchName) {
-          // Convert online field from bool to int if needed
-          int? onlineValue;
-          if (data['online'] is bool) {
-            onlineValue = data['online'] ? 1 : 0;
-          } else if (data['online'] is int) {
-            onlineValue = data['online'];
-          }
-
-          var user = UserProfile(
-            token: data['token'],
-            name: data['name'],
-            avatar: data['avatar'],
-            email: data['email'],
-            online: onlineValue,
-          );
-
-          // Store for sorting
-          tempResults.add(user);
-        }
-      }
-
-      // Sort by relevance (you can enhance this with the match score)
-      tempResults.sort((a, b) {
-        // Prioritize exact matches first
-        String aName = (a.name ?? '').toLowerCase();
-        String bName = (b.name ?? '').toLowerCase();
-
-        bool aExact = aName == searchLower;
-        bool bExact = bName == searchLower;
-
-        if (aExact && !bExact) return -1;
-        if (!aExact && bExact) return 1;
-
-        // Then sort by name starts with query
-        bool aStarts = aName.startsWith(searchLower);
-        bool bStarts = bName.startsWith(searchLower);
-
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-
-        // Finally alphabetical
-        return aName.compareTo(bName);
-      });
-
-      // Limit results to top 20
-      state.searchResults.addAll(tempResults.take(20));
+      state.searchResults.value = results;
       state.isSearching.value = false;
 
-      print("[ContactController] Found ${state.searchResults.length} users");
+      print("[ContactController] Found ${results.length} users");
     } catch (e) {
       print("[ContactController] Error searching users: $e");
       state.isSearching.value = false;

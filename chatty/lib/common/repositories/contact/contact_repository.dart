@@ -67,14 +67,25 @@ class ContactRepository extends BaseRepository {
   /// Load pending incoming contact requests
   Future<List<ContactEntity>> getPendingRequests() async {
     try {
-      logDebug('Loading pending incoming requests');
+      logDebug('Loading pending incoming requests for token: $_myToken');
 
       final snapshot = await _db
           .collection("contacts")
           .where("contact_token", isEqualTo: _myToken)
           .where("status", isEqualTo: "pending")
-          .orderBy("requested_at", descending: true)
+          // NOTE: Removed orderBy to avoid Firestore composite index requirement
+          // Requests will be returned in insertion order (usually newest last)
           .get();
+
+      print(
+          '[ContactRepository] 📊 Query returned ${snapshot.docs.length} documents');
+
+      // Debug: Print each document
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        print(
+            '[ContactRepository] 📄 Doc ${doc.id}: from ${data['user_name']} (${data['user_token']}) to ${data['contact_token']}');
+      }
 
       final requests = snapshot.docs
           .map((doc) => ContactEntity.fromFirestore(
@@ -82,6 +93,16 @@ class ContactRepository extends BaseRepository {
                 null,
               ))
           .toList();
+
+      // Sort in memory by requested_at (newest first)
+      requests.sort((a, b) {
+        final aTime = a.requested_at;
+        final bTime = b.requested_at;
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return bTime.compareTo(aTime); // Descending order (newest first)
+      });
 
       logSuccess('Loaded ${requests.length} pending requests');
       return requests;
@@ -104,7 +125,7 @@ class ContactRepository extends BaseRepository {
           .collection("contacts")
           .where("user_token", isEqualTo: _myToken)
           .where("status", isEqualTo: "pending")
-          .orderBy("requested_at", descending: true)
+          // NOTE: Removed orderBy to avoid Firestore composite index requirement
           .get();
 
       final requests = snapshot.docs
@@ -113,6 +134,16 @@ class ContactRepository extends BaseRepository {
                 null,
               ))
           .toList();
+
+      // Sort in memory by requested_at (newest first)
+      requests.sort((a, b) {
+        final aTime = a.requested_at;
+        final bTime = b.requested_at;
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return bTime.compareTo(aTime);
+      });
 
       logSuccess('Loaded ${requests.length} sent requests');
       return requests;
@@ -135,7 +166,7 @@ class ContactRepository extends BaseRepository {
           .collection("contacts")
           .where("user_token", isEqualTo: _myToken)
           .where("status", isEqualTo: "blocked")
-          .orderBy("blocked_at", descending: true)
+          // NOTE: Removed orderBy to avoid Firestore composite index requirement
           .get();
 
       final blocked = snapshot.docs
@@ -144,6 +175,16 @@ class ContactRepository extends BaseRepository {
                 null,
               ))
           .toList();
+
+      // Sort in memory by blocked_at (newest first)
+      blocked.sort((a, b) {
+        final aTime = a.blocked_at;
+        final bTime = b.blocked_at;
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return bTime.compareTo(aTime);
+      });
 
       logSuccess('Loaded ${blocked.length} blocked users');
       return blocked;
