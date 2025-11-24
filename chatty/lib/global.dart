@@ -24,6 +24,7 @@ import 'package:sakoa/common/services/message_delivery_service.dart';
 import 'package:sakoa/common/repositories/chat/voice_message_repository.dart';
 import 'package:sakoa/common/repositories/chat/text_message_repository.dart';
 import 'package:sakoa/common/repositories/chat/image_message_repository.dart';
+import 'package:sakoa/common/repositories/chat/chat_repository.dart';
 import 'package:sakoa/common/repositories/contact/contact_repository.dart';
 import 'package:sakoa/common/repositories/call/call_repository.dart';
 import 'package:sakoa/common/repositories/auth/auth_repository.dart';
@@ -94,7 +95,13 @@ class Global {
       db: FirebaseFirestore.instance,
     ));
 
-    // 👥 Initialize Contact Repository
+    // � Initialize Chat Repository (general chat operations)
+    print('[Global] 🚀 Initializing ChatRepository...');
+    Get.put<ChatRepository>(ChatRepository(
+      db: FirebaseFirestore.instance,
+    ));
+
+    // �👥 Initialize Contact Repository
     print('[Global] 🚀 Initializing ContactRepository...');
     Get.put<ContactRepository>(ContactRepository(
       db: FirebaseFirestore.instance,

@@ -19,7 +19,8 @@ import 'package:sakoa/common/widgets/block_settings_dialog.dart';
 import 'package:sakoa/common/services/voice_message_service.dart'; // 🔥 NEW: Voice messaging
 import 'package:sakoa/common/services/message_delivery_service.dart'; // 🔥 INDUSTRIAL: Delivery tracking
 import 'package:sakoa/common/services/voice_cache_manager.dart'; // 🎯 FIX #1: Pre-caching
-import 'package:sakoa/common/repositories/chat/voice_message_repository.dart'; // � Voice message repository
+import 'package:sakoa/common/repositories/chat/chat_repository.dart'; // 💬 Chat repository (general ops)
+import 'package:sakoa/common/repositories/chat/voice_message_repository.dart'; // 🎤 Voice message repository
 import 'package:sakoa/common/repositories/chat/text_message_repository.dart'; // 📝 Text message repository
 import 'package:sakoa/common/repositories/chat/image_message_repository.dart'; // 🖼️ Image message repository
 
@@ -55,6 +56,7 @@ class ChatController extends GetxController {
   late MessageDeliveryService _deliveryService;
 
   // 🏗️ REPOSITORY LAYER: Domain-specific repositories
+  late ChatRepository _chatRepository; // General chat operations
   late VoiceMessageRepository _voiceMessageRepository;
   late TextMessageRepository _textMessageRepository;
   late ImageMessageRepository _imageMessageRepository;
@@ -119,9 +121,9 @@ class ChatController extends GetxController {
     }
   }
 
+  /// 📝 Send text message using TextMessageRepository
+  /// 🏗️ REFACTORED: Now uses TextMessageRepository (thin controller pattern)
   sendMessage() async {
-    print("---------------chat-----------------");
-
     // 🔥 BLOCKING CHECK
     if (isBlocked.value) {
       toastInfo(msg: "Cannot send message to blocked user");
@@ -133,62 +135,40 @@ class ChatController extends GetxController {
       toastInfo(msg: "content not empty");
       return;
     }
-    print("---------------chat--${sendcontent}-----------------");
 
-    // 🔥 CREATE MESSAGE WITH REPLY SUPPORT
-    final content = Msgcontent(
-      token: token,
-      content: sendcontent,
-      type: "text",
-      addtime: Timestamp.now(),
-      reply:
-          isReplyMode.value ? replyingTo.value : null, // 🔥 Add reply if exists
-    );
-
-    // 🔥 INDUSTRIAL-GRADE: Send with delivery tracking
-    final result = await _deliveryService.sendMessageWithTracking(
-      chatDocId: doc_id,
-      content: content,
-    );
-
-    if (result.success || result.queued) {
-      print(
-          '[ChatController] ✅ Message sent: ${result.messageId} (queued: ${result.queued})');
-      myinputController.clear();
-
-      // Update chat metadata
-      var message_res = await db
-          .collection("message")
-          .doc(doc_id)
-          .withConverter(
-            fromFirestore: Msg.fromFirestore,
-            toFirestore: (Msg msg, options) => msg.toFirestore(),
-          )
-          .get();
-      if (message_res.data() != null) {
-        var item = message_res.data()!;
-        int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
-        int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
-        if (item.from_token == token) {
-          from_msg_num = from_msg_num + 1;
-        } else {
-          to_msg_num = to_msg_num + 1;
-        }
-        await db.collection("message").doc(doc_id).update({
-          "to_msg_num": to_msg_num,
-          "from_msg_num": from_msg_num,
-          "last_msg": sendcontent,
-          "last_time": Timestamp.now()
-        });
-      }
-      sendNotifications("text");
-    } else {
-      print('[ChatController] ❌ Message failed: ${result.error}');
-      toastInfo(msg: result.error ?? "Failed to send message");
+    // Validate token
+    if (token == null || token!.isEmpty) {
+      print('[ChatController] ❌ No user token available');
+      toastInfo(msg: "Unable to send message - user not authenticated");
+      return;
     }
 
-    // 🔥 CLEAR REPLY MODE after sending
-    clearReplyMode();
+    try {
+      print('[ChatController] 📝 Sending text message...');
+
+      // 🏗️ REPOSITORY: Delegate to text message repository
+      // Repository handles: message creation, delivery tracking, metadata updates
+      final result = await _textMessageRepository.sendTextMessage(
+        chatDocId: doc_id,
+        senderToken: token!,
+        text: sendcontent,
+        reply: isReplyMode.value ? replyingTo.value : null,
+      );
+
+      if (result.success || result.queued) {
+        print(
+            '[ChatController] ✅ Text sent: ${result.messageId} (queued: ${result.queued})');
+        myinputController.clear();
+        sendNotifications("text");
+        clearReplyMode();
+      } else {
+        print('[ChatController] ❌ Text failed: ${result.error}');
+        toastInfo(msg: result.error ?? "Failed to send message");
+      }
+    } catch (e) {
+      print('[ChatController] ❌ Failed to send text message: $e');
+      toastInfo(msg: "Failed to send message");
+    }
   }
 
   /// 🖼️ Send image message using ImageMessageRepository
@@ -571,59 +551,49 @@ class ChatController extends GetxController {
     }
   }
 
+  /// 🔢 Clear unread message count
+  /// 🏗️ REFACTORED: Now uses ChatRepository (thin controller pattern)
   clear_msg_num(String doc_id) async {
-    var message_res = await db
-        .collection("message")
-        .doc(doc_id)
-        .withConverter(
-          fromFirestore: Msg.fromFirestore,
-          toFirestore: (Msg msg, options) => msg.toFirestore(),
-        )
-        .get();
-    if (message_res.data() != null) {
-      var item = message_res.data()!;
-      int to_msg_num = item.to_msg_num == null ? 0 : item.to_msg_num!;
-      int from_msg_num = item.from_msg_num == null ? 0 : item.from_msg_num!;
-      if (item.from_token == token) {
-        to_msg_num = 0;
-      } else {
-        from_msg_num = 0;
-      }
-      await db
-          .collection("message")
-          .doc(doc_id)
-          .update({"to_msg_num": to_msg_num, "from_msg_num": from_msg_num});
+    if (token == null || token!.isEmpty) {
+      print('[ChatController] ⚠️ Cannot clear unread count - no token');
+      return;
     }
+
+    // 🏗️ REPOSITORY: Delegate to chat repository
+    await _chatRepository.clearUnreadCount(doc_id, token!);
   }
 
+  /// 📥 Load more messages (pagination)
+  /// 🏗️ REFACTORED: Now uses ChatRepository (thin controller pattern)
   asyncLoadMoreData(int page) async {
-    final messages = await db
-        .collection("message")
-        .doc(doc_id)
-        .collection("msglist")
-        .withConverter(
-          fromFirestore: Msgcontent.fromFirestore,
-          toFirestore: (Msgcontent msgcontent, options) =>
-              msgcontent.toFirestore(),
-        )
-        .orderBy("addtime", descending: true)
-        .where("addtime", isLessThan: state.msgcontentList.last.addtime)
-        .limit(10)
-        .get();
-    print(state.msgcontentList.last.content);
-    print("isGreaterThan-----");
-    if (messages.docs.isNotEmpty) {
-      messages.docs.forEach((element) {
-        var data = element.data();
-        state.msgcontentList.add(data);
-        print(data.content);
-      });
+    if (state.msgcontentList.isEmpty) {
+      state.isloading.value = false;
+      return;
+    }
+
+    try {
+      print('[ChatController] 📥 Loading more messages...');
+
+      // 🏗️ REPOSITORY: Delegate to chat repository
+      final messages = await _chatRepository.loadMoreMessages(
+        chatDocId: doc_id,
+        beforeTimestamp: state.msgcontentList.last.addtime!,
+        limit: 10,
+      );
+
+      if (messages.isNotEmpty) {
+        state.msgcontentList.addAll(messages);
+        print('[ChatController] ✅ Loaded ${messages.length} more messages');
+      }
 
       SchedulerBinding.instance.addPostFrameCallback((_) {
         isloadmore = true;
       });
+    } catch (e) {
+      print('[ChatController] ❌ Failed to load more messages: $e');
+    } finally {
+      state.isloading.value = false;
     }
-    state.isloading.value = false;
   }
 
   close_all_pop() async {
@@ -841,6 +811,9 @@ class ChatController extends GetxController {
     print('[ChatController] ✅ Delivery tracking service initialized');
 
     // 🏗️ REPOSITORY LAYER: Domain-specific repositories
+    _chatRepository = Get.find<ChatRepository>();
+    print('[ChatController] ✅ Chat repository initialized');
+
     _voiceMessageRepository = Get.find<VoiceMessageRepository>();
     print('[ChatController] ✅ Voice message repository initialized');
 
@@ -853,54 +826,45 @@ class ChatController extends GetxController {
     clear_msg_num(doc_id);
   }
 
+  /// 🔄 Initialize real-time message listener
+  /// 🏗️ REFACTORED: Now uses ChatRepository stream (thin controller pattern)
   @override
   void onReady() {
     super.onReady();
-    print("onReady------------");
+    print("[ChatController] onReady - Initializing message listener...");
     state.msgcontentList.clear();
-    final messages = db
-        .collection("message")
-        .doc(doc_id)
-        .collection("msglist")
-        .withConverter(
-          fromFirestore: Msgcontent.fromFirestore,
-          toFirestore: (Msgcontent msgcontent, options) =>
-              msgcontent.toFirestore(),
-        )
-        .orderBy("addtime", descending: true)
-        .limit(15);
 
-    listener = messages.snapshots().listen(
+    // 🏗️ REPOSITORY: Subscribe to real-time message stream
+    listener = _chatRepository
+        .subscribeToMessages(chatDocId: doc_id, limit: 15)
+        .listen(
       (event) {
-        print("current data: ${event.docs}");
-        print("current data: ${event.metadata.hasPendingWrites}");
+        print(
+            "[ChatController] 📨 Received ${event.docChanges.length} changes");
+
         List<Msgcontent> tempMsgList = <Msgcontent>[];
+
         for (var change in event.docChanges) {
           switch (change.type) {
             case DocumentChangeType.added:
-              print("added----: ${change.doc.data()}");
               if (change.doc.data() != null) {
                 final msg = change.doc.data()!;
 
-                // 🔥 SKIP if message already exists in list (avoid duplicates from placeholder)
+                // 🔥 SKIP duplicates (avoid duplicates from placeholder)
                 if (msg.id != null &&
                     state.msgcontentList.any((m) => m.id == msg.id)) {
-                  print(
-                      '[ChatController] ⏭️ Skipping duplicate message: ${msg.id}');
+                  print('[ChatController] ⏭️ Skipping duplicate: ${msg.id}');
                   continue;
                 }
 
-                // 🔥 BLOCK INCOMING MESSAGES from blocked users
+                // 🔥 BLOCK incoming messages from blocked users
                 if (msg.token != null && msg.token != token) {
-                  // This is an incoming message - check if sender is blocked
                   if (BlockingService.to.isBlockedCached(msg.token!)) {
-                    print("⛔ Blocked incoming message from ${msg.token}");
-                    continue; // Skip this message
+                    print("⛔ Blocked message from ${msg.token}");
+                    continue;
                   }
 
-                  // 🔥 V2: Smart read receipts handled by MessageVisibilityDetector
-                  // No automatic marking - only when message is actually visible
-                  // Mark as delivered when received
+                  // 🔥 Mark as delivered when received
                   if (msg.id != null && msg.delivery_status == 'sent') {
                     _deliveryService.markAsDelivered(
                       chatDocId: doc_id,
@@ -912,32 +876,36 @@ class ChatController extends GetxController {
                 tempMsgList.add(msg);
               }
               break;
+
             case DocumentChangeType.modified:
-              print("Modified Message: ${change.doc.data()}");
-              // 🔥 INDUSTRIAL-GRADE: Handle delivery status updates
+              // 🔥 Handle delivery status updates
               if (change.doc.data() != null) {
                 final updatedMsg = change.doc.data()!;
-                // Find and update the message in the list
                 final index = state.msgcontentList
                     .indexWhere((msg) => msg.id == updatedMsg.id);
                 if (index != -1) {
                   state.msgcontentList[index] = updatedMsg;
                   state.msgcontentList.refresh();
                   print(
-                      '[ChatController] ✅ Updated message status: ${updatedMsg.id} -> ${updatedMsg.delivery_status}');
+                      '[ChatController] ✅ Updated status: ${updatedMsg.id} -> ${updatedMsg.delivery_status}');
                 }
               }
               break;
+
             case DocumentChangeType.removed:
-              print("Removed City: ${change.doc.data()}");
+              print(
+                  "[ChatController] 🗑️ Message removed: ${change.doc.data()}");
               break;
           }
         }
+
+        // Add new messages in reverse order (newest first)
         tempMsgList.reversed.forEach((element) {
           state.msgcontentList.insert(0, element);
         });
         state.msgcontentList.refresh();
 
+        // Auto-scroll to bottom for new messages
         SchedulerBinding.instance.addPostFrameCallback((_) {
           if (myscrollController.hasClients) {
             myscrollController.animateTo(
@@ -948,12 +916,11 @@ class ChatController extends GetxController {
           }
         });
       },
-      onError: (error) => print("Listen failed: $error"),
+      onError: (error) => print("[ChatController] ❌ Listener error: $error"),
     );
 
+    // Setup pagination scroll listener
     myscrollController.addListener(() {
-      // print(myscrollController.offset);
-      //  print(myscrollController.position.maxScrollExtent);
       if ((myscrollController.offset + 10) >
           myscrollController.position.maxScrollExtent) {
         if (isloadmore) {
